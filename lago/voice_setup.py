@@ -21,7 +21,7 @@ from config_store import STATE_DIR
 
 STATUS_FILE = STATE_DIR / "voice-setup.json"
 LOG_FILE = STATE_DIR / "voice-setup.log"
-PACKAGES = ["kokoro-onnx", "edge-tts", "faster-whisper"]
+PACKAGES = ["kokoro-onnx", "soundfile", "edge-tts", "faster-whisper"]
 MODEL_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
 MODEL_FILES = ["kokoro-v1.0.onnx", "voices-v1.0.bin"]
 STALE_SECONDS = 30 * 60  # a "running" status this old belongs to an install that died

@@ -127,7 +127,7 @@ which makes the speech venv and downloads the Kokoro voices in the background, o
 
 ```bash
 python3 -m venv ~/.local/share/lago-agents/tts
-~/.local/share/lago-agents/tts/bin/pip install kokoro-onnx edge-tts faster-whisper
+~/.local/share/lago-agents/tts/bin/pip install kokoro-onnx soundfile edge-tts faster-whisper
 # Put kokoro-v1.0.onnx and voices-v1.0.bin in ~/.local/share/lago-agents/kokoro/.
 # The Whisper model downloads itself on first use.
 ```
