@@ -49,6 +49,14 @@ import listen  # noqa: E402
 
 listen.set_service = lambda on: None  # never installs or starts the real wake-phrase listener
 
+# Nothing a test installs may link into your real ~/.claude: skills and agents link here.
+import portability  # noqa: E402
+import skill_sources  # noqa: E402
+
+CLAUDE_HOME = TMP / "claude-home"
+skill_sources.LINK_DIR = portability.SKILLS_LINK_DIR = CLAUDE_HOME / "skills"
+portability.AGENTS_LINK_DIR = CLAUDE_HOME / "agents"
+
 BASE_CONFIG = {
     "teams": {"dev": {"name": "Dev", "cwd": str(TMP)}},
     "agents": {"dev-lead": {"name": "Lead", "team": "dev", "definition": "orchestrator",
@@ -69,4 +77,6 @@ def reset():
     import live
     live._ready = False  # its table goes with the old hub.db
     shutil.rmtree(config_store.STATE_DIR / "agent-drafts", ignore_errors=True)
+    shutil.rmtree(CLAUDE_HOME, ignore_errors=True)
+    shutil.rmtree(config_store.DATA_DIR / "claude-skills", ignore_errors=True)
     config_store.CONFIG_PATH.write_text(json.dumps(BASE_CONFIG))
