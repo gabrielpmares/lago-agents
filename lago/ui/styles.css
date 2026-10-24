@@ -1793,3 +1793,28 @@ a.mini-avatar:focus-visible { box-shadow: var(--focus); outline: none; }
 .ansi-b1, .ansi-b9 { background: var(--danger-soft); } .ansi-b2, .ansi-b10 { background: var(--accent-soft); } .ansi-b3, .ansi-b11 { background: var(--warn-soft); }
 .ansi-b4, .ansi-b12 { background: rgb(91 141 239 / 0.18); } .ansi-b5, .ansi-b13 { background: rgb(183 127 214 / 0.18); } .ansi-b6, .ansi-b14 { background: rgb(63 169 192 / 0.18); }
 .ansi-fbg { color: var(--bg); } .ansi-bfg { background: var(--text); }
+
+/* ---------------------------------------------------------------- importing from Paperclip */
+.import-flow { display: grid; gap: 14px; max-width: 920px; }
+.import-card { display: grid; gap: 10px; padding: 16px 18px; border-radius: var(--r-surface); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
+.import-card h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 600; }
+.import-card h2 .ph { color: var(--accent); font-size: 18px; }
+.import-card p { margin: 0; line-height: 1.5; }
+.import-card code { font-size: 12px; overflow-wrap: anywhere; }
+.import-sources { display: grid; gap: 10px; }
+.import-line { display: grid; grid-template-columns: 170px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.import-line label { font-size: 13px; color: var(--text-2); }
+.import-group { display: grid; gap: 4px; margin-top: 6px; }
+.import-group h3 { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.import-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: start; padding: 8px 10px; border-radius: var(--r-control); background: var(--surface-2); cursor: pointer; }
+.import-item input[type="checkbox"] { margin-top: 3px; accent-color: var(--accent); }
+.import-item.blocked { cursor: default; opacity: 0.75; }
+.import-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.import-text strong { font-size: 13.5px; font-weight: 600; }
+.import-text small { font-size: 12px; }
+.import-why { display: inline-flex; align-items: center; gap: 4px; color: var(--warn); }
+.import-folder { grid-column: 2; display: grid; gap: 4px; }
+.import-folder .input { font-size: 12.5px; }
+.import-left { margin: 4px 0 0; padding-left: 20px; display: grid; gap: 4px; font-size: 13px; color: var(--text-2); }
+.imported-body { margin: 6px 0 0; font-size: 12.5px; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 700px) { .import-line { grid-template-columns: 1fr; } }

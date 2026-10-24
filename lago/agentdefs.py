@@ -225,7 +225,7 @@ AGENT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 
 def write_agent(agent_id, name, summary, prompt="", domain="general", extends="", inputs=None,
                 outputs=None, requires="", use_when="", avoid_when="", tags=None, tools="",
-                model="", replace=False, folder=None, mcp="", source=""):
+                model="", replace=False, folder=None, mcp="", source="", skills="", runtime="", codex_model=""):
     """Add a swarm agent to the catalog (catalog/agents/<id>.md). It belongs to no project:
     any Conductor can wake it. With `folder`, write it there as agent.md instead (a draft
     for you to approve). Returns its path."""
@@ -268,6 +268,12 @@ def write_agent(agent_id, name, summary, prompt="", domain="general", extends=""
         lines.append(f"model: {one_line(model)}")
     if mcp:
         lines.append(f"mcp: {one_line(mcp)}")
+    if skills:
+        lines.append(f"skills: {one_line(', '.join(skills) if isinstance(skills, list) else skills)}")
+    if runtime:
+        lines.append(f"runtime: {one_line(runtime)}")
+    if codex_model:
+        lines.append(f"codex_model: {one_line(codex_model)}")
     if source:
         lines.append(f"source: {one_line(source)}")
     lines += ["---", "", (prompt or "").strip(), ""]

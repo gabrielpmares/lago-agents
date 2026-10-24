@@ -382,7 +382,7 @@ function navigate() {
   currentView = view;
   const token = ++viewToken;
   const navName = { agent: "overview", pipeline: "projects", pipelines: "projects", project: "projects", work: "tasks",
-    teams: "swarm", sessions: "swarm", find: "swarm", replay: "map" }[view] || view;
+    teams: "swarm", sessions: "swarm", find: "swarm", import: "swarm", replay: "map" }[view] || view;
   document.querySelectorAll(".nav a").forEach((a) => {
     if (a.dataset.view === navName) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
@@ -1261,9 +1261,27 @@ views.tasks = (root, alive) => {
       h("div", { class: "fold-body" }, taskList((handoffs || []).filter((t) => filter === "all" || (filter === "open") === ["queued", "blocked", "sent", "working"].includes(t.status)))));
     handoffFold.open = wasOpen;
   };
+  const imported = h("div");
+  let importedKey = "";
+  const renderImported = (rows) => {
+    const key = JSON.stringify(rows);
+    if (key === importedKey) return;
+    importedKey = key;
+    const start = (t) => newTaskDialog({ text: `${t.title}\n\n${t.body}`.trim(), project: t.project, agent: t.agent,
+      onStarted: () => bridge.call("imported_task_status", { task_id: t.id, status: "started" }).then(load) });
+    fill(imported, rows.length ? h("section", { class: "drafts" }, h("h2", { class: "label" }, icon("download-simple"), ` Waiting from Paperclip (${rows.length})`),
+      rows.map((t) => h("article", { class: "draft-row" },
+        h("div", { class: "draft-row-top" }, h("strong", {}, t.title),
+          h("span", { class: "faint", style: "font-size:12px" }, [t.ref, t.project ? projectName(t.project) : "", t.priority].filter(Boolean).join(" · ")),
+          h("span", { style: "flex:1" }),
+          h("button", { type: "button", class: "btn small primary", onclick: () => start(t) }, icon("play"), "Start"),
+          h("button", { type: "button", class: "btn small ghost", onclick: (e) => runAction(e.currentTarget, () => bridge.call("imported_task_status", { task_id: t.id, status: "dismissed" })).then(load) }, "Dismiss")),
+        t.body ? h("p", { class: "faint imported-body" }, t.body) : null))) : null);
+  };
   const load = async () => {
     try {
       [mine, handoffs] = await Promise.all([bridge.call("my_tasks"), bridge.call("tasks")]);
+      if (!state.web || state.me?.owner || state.me?.admin) bridge.call("imported_tasks").then((rows) => { if (alive()) renderImported(rows); }).catch(() => {});
       if (alive()) render();
     } catch (error) {
       if (alive()) body.replaceChildren(errorBox(error, load));
@@ -1271,7 +1289,7 @@ views.tasks = (root, alive) => {
   };
   root.append(pageHead("Tasks", "Everything you asked for, and where it stands."),
     h("div", { class: "controls-line" }, h("button", { class: "btn primary", onclick: () => newTaskDialog() }, icon("plus"), "New Task"), seg,
-      h("button", { class: "btn ghost", title: "Mark every task as seen", onclick: (e) => runAction(e.currentTarget, () => bridge.call("mark_read", { items: (mine || []).filter((t) => t.unread).map((t) => t.item) })).then(load) }, icon("checks"), "Mark All Read")), body, handoffFold);
+      h("button", { class: "btn ghost", title: "Mark every task as seen", onclick: (e) => runAction(e.currentTarget, () => bridge.call("mark_read", { items: (mine || []).filter((t) => t.unread).map((t) => t.item) })).then(load) }, icon("checks"), "Mark All Read")), imported, body, handoffFold);
   const timer = setInterval(() => { if (document.visibilityState === "visible" && !byId("dialog").open) load(); }, 3000);
   viewCleanup = () => clearInterval(timer);
   load();
@@ -1696,7 +1714,7 @@ async function skillFetchDialog() {
 /* Agents, Teams and other Claude sessions: one place, three tabs. */
 function agentsTabs(active) {
   return h("nav", { class: "segmented page-tabs", "aria-label": "Agents" },
-    [["swarm", "Agents", "users-three"], ["find", "Find on GitHub", "compass"], ["teams", "Fixed Teams", "tree-structure"], ["sessions", "Other Claude Sessions", "terminal-window"]]
+    [["swarm", "Agents", "users-three"], ["find", "Find on GitHub", "compass"], ["import", "Import", "download-simple"], ["teams", "Fixed Teams", "tree-structure"], ["sessions", "Other Claude Sessions", "terminal-window"]]
       .map(([view, label, ic]) => h("a", { href: `#${view}`, role: "tab", "aria-selected": String(view === active), class: view === active ? "on" : "" }, icon(ic), label)));
 }
 
@@ -2963,6 +2981,116 @@ async function explainDialog(c, onImport) {
 /* Lago's own list of agents on GitHub (ghcatalog.py): open-source licensed, gaining stars
    lately, by topic, in plain words. Importing goes through the GitHub Agent Builder's checks
    and a draft you approve on the Agents tab. */
+/* Bringing a setup over from Paperclip (paperclip_import.py): choose the company package it
+   exported, see what's in it and what can't come over, tick what to import. */
+views.import = (root, alive) => {
+  const body = h("div", { class: "import-flow" });
+  root.append(pageHead("Agents", "Bring the agents, skills, routines, projects and open tasks you built in Paperclip."), agentsTabs("import"), body);
+  const zipInput = h("input", { type: "file", accept: ".zip,application/zip", hidden: true, onchange: () => { const file = zipInput.files[0]; zipInput.value = ""; if (file) readZip(file); } });
+  const folder = h("input", { class: "input mono", placeholder: "~/acme-export", spellcheck: "false", "aria-label": "Exported folder" });
+  const repo = h("input", { class: "input mono", placeholder: "owner/repo", spellcheck: "false", "aria-label": "GitHub repository" });
+  const status = h("p", { class: "faint", "aria-live": "polite" });
+
+  const stage = async (button, params) => {
+    let token = null;
+    const ok = await runAction(button, async () => { token = (await bridge.call("paperclip_stage", params)).token; return { ok: true, message: "Package read: tick what to import." }; });
+    if (ok && token && alive()) showPreview(token);
+  };
+  const readZip = (file) => {
+    const reader = new FileReader();
+    status.textContent = `Reading ${file.name}…`;
+    reader.onload = () => { status.textContent = ""; stage(null, { zip: reader.result }); };
+    reader.onerror = () => { status.textContent = "That file couldn't be read."; };
+    reader.readAsDataURL(file);
+  };
+
+  const choose = () => fill(body,
+    h("section", { class: "import-card" },
+      h("h2", {}, icon("export"), "1. Export your company from Paperclip"),
+      h("p", {}, "In Paperclip, open your company's settings, then ", h("strong", {}, "Export"), ". Include agents, skills, projects and tasks, and download the zip."),
+      h("p", { class: "faint" }, "From a terminal instead: ", h("code", {}, "paperclipai company export <company-id> --out ./my-company --include company,agents,projects,tasks,skills --expand-referenced-skills"))),
+    h("section", { class: "import-card" },
+      h("h2", {}, icon("download-simple"), "2. Bring it here"),
+      h("div", { class: "import-sources" },
+        h("div", {}, h("button", { type: "button", class: "btn primary", onclick: () => zipInput.click() }, icon("file-zip"), "Choose the Zip…"), zipInput),
+        h("form", { class: "import-line", onsubmit: (e) => { e.preventDefault(); stage(e.submitter, { folder: folder.value }); } },
+          h("label", {}, "Or the exported folder"), folder, h("button", { type: "submit", class: "btn" }, "Open")),
+        h("form", { class: "import-line", onsubmit: (e) => { e.preventDefault(); stage(e.submitter, { github: repo.value }); } },
+          h("label", {}, "Or a GitHub repository"), repo, h("button", { type: "submit", class: "btn" }, "Fetch"))),
+      status,
+      h("p", { class: "faint" }, "Nothing is imported until you've seen what's in it and ticked what you want.")));
+
+  function showPreview(token) {
+    body.replaceChildren(skeleton(4));
+    bridge.call("paperclip_preview", { token }).then((p) => { if (alive()) renderPreview(token, p); }, (error) => alive() && body.replaceChildren(errorBox(error, choose)));
+  }
+
+  function renderPreview(token, p) {
+    const picked = { agents: new Set(), skills: new Set(), routines: new Set(), tasks: new Set(), projects: new Set() };
+    const folders = {};
+    const box = (kind, item) => {
+      const usable = !item.blocked;
+      if (usable) picked[kind].add(item.slug);
+      return h("input", { type: "checkbox", checked: usable, disabled: !usable, "aria-label": `Import ${item.name}`,
+        onchange: (e) => { e.target.checked ? picked[kind].add(item.slug) : picked[kind].delete(item.slug); } });
+    };
+    const row = (kind, item, extra) => h("label", { class: `import-item${item.blocked ? " blocked" : ""}` }, box(kind, item),
+      h("span", { class: "import-text" }, h("strong", {}, item.name),
+        item.note ? h("small", { class: "faint" }, item.note) : null,
+        item.blocked ? h("small", { class: "import-why" }, icon("prohibit"), item.blocked) : null,
+        item.exists ? h("small", { class: "faint" }, "You already have one with this name: it comes in under a new one.") : null),
+      extra || null);
+    const section = (kind, title, ic, items, extra) => items.length ? h("section", { class: "import-group" },
+      h("h3", {}, icon(ic), `${title} (${items.length})`), items.map((item) => row(kind, item, extra?.(item)))) : null;
+    const projectFolder = (item) => {
+      folders[item.slug] = item.folder;
+      return h("span", { class: "import-folder", onclick: (e) => e.preventDefault() },
+        h("input", { class: "input mono", value: item.folder, "aria-label": `Folder for ${item.name}`, oninput: (e) => { folders[item.slug] = e.target.value; } }),
+        h("small", { class: "faint" }, item.repo ? `Cloned from ${item.repo} if the folder doesn't exist yet.` : "Made empty if it doesn't exist yet."));
+    };
+    const total = ["agents", "skills", "projects", "routines", "tasks"].reduce((n, k) => n + p[k].length, 0);
+    fill(body,
+      h("section", { class: "import-card" },
+        h("h2", {}, icon("buildings"), p.company.name, h("span", { class: "faint" }, ` · ${total} things found`)),
+        p.company.description ? h("p", { class: "faint" }, p.company.description) : null,
+        section("agents", "Agents", "robot", p.agents),
+        section("skills", "Skills", "lightning", p.skills),
+        section("projects", "Projects", "folders", p.projects, projectFolder),
+        section("routines", "Routines", "repeat", p.routines),
+        section("tasks", "Open tasks", "list-checks", p.tasks),
+        h("details", { class: "fold" }, h("summary", {}, icon("info"), "What doesn't come over"),
+          h("ul", { class: "import-left" }, p.left_out.map((line) => h("li", {}, line)))),
+        h("p", { class: "faint" }, "Routines arrive switched off. Open tasks wait on the Tasks page until you start them."),
+        h("div", { class: "toolbar" },
+          h("button", { type: "button", class: "btn ghost", onclick: choose }, "Choose Another"),
+          h("span", { style: "flex:1" }),
+          h("button", { type: "button", class: "btn primary", onclick: async (e) => {
+            let result = null;
+            const projects = Object.fromEntries([...picked.projects].map((slug) => [slug, folders[slug]]));
+            const ok = await runAction(e.currentTarget, async () => {
+              result = await bridge.call("paperclip_apply", { token, agents: [...picked.agents], skills: [...picked.skills], projects,
+                routines: [...picked.routines], tasks: [...picked.tasks] });
+              return { ok: true, message: result.done.length ? `Imported ${result.done.length} from Paperclip.` : "Nothing was imported." };
+            });
+            if (ok && result && alive()) { await refreshCatalog(); state.config = (await bridge.call("init")).config; renderDone(result); }
+          } }, icon("download-simple"), "Import"))));
+  }
+
+  function renderDone(result) {
+    fill(body, h("section", { class: "import-card" },
+      h("h2", {}, icon("check-circle", "ph-fill"), result.done.length ? `Imported ${result.done.length} thing${result.done.length === 1 ? "" : "s"}` : "Nothing was imported"),
+      result.done.length ? h("ul", { class: "import-left" }, result.done.map((line) => h("li", {}, line))) : null,
+      result.skipped.length ? [h("h3", {}, "Skipped"), h("ul", { class: "import-left" }, result.skipped.map((line) => h("li", {}, line)))] : null,
+      h("div", { class: "toolbar" },
+        h("a", { class: "btn", href: "#swarm" }, icon("users-three"), "Agents"),
+        h("a", { class: "btn", href: "#routines" }, icon("repeat"), "Routines"),
+        h("a", { class: "btn", href: "#tasks" }, icon("list-checks"), "Tasks"),
+        h("span", { style: "flex:1" }),
+        h("button", { type: "button", class: "btn ghost", onclick: choose }, "Import Another"))));
+  }
+  choose();
+};
+
 views.find = (root, alive) => {
   let topic = "";
   let query = "";
@@ -6828,7 +6956,7 @@ function newTaskDialog(preset = {}) {
   const project = h("select", { class: "select", "aria-label": "Project" },
     [...(member ? [] : [["", "Lago decides"]]), ...projectChoices].map(([v, l]) => h("option", { value: v, selected: v === (preset.project || "") }, l)));
   const agent = h("select", { class: "select", "aria-label": "Who does it" },
-    [["", "Lago picks the agents"], ...state.catalog.agents.filter((a) => a.enabled !== false).sort((a, b) => a.name.localeCompare(b.name)).map((a) => [a.id, a.name])].map(([v, l]) => h("option", { value: v }, l)));
+    [["", "Lago picks the agents"], ...state.catalog.agents.filter((a) => a.enabled !== false).sort((a, b) => a.name.localeCompare(b.name)).map((a) => [a.id, a.name])].map(([v, l]) => h("option", { value: v, selected: v === (preset.agent || "") }, l)));
   const note = h("p", { class: "faint", style: "font-size:12.5px;margin:0" });
   const explain = () => { note.textContent = agent.value ? "That agent does it right away; Lago gets the result and tells you."
     : project.value ? "A task opens on that project: its lead plans the work with the agents and asks you to approve the plan. Lago follows it."
@@ -6842,7 +6970,7 @@ function newTaskDialog(preset = {}) {
         href = res.href;
         return res;
       });
-      if (ok) { close(); if (href) location.hash = href.slice(1); pollLive(); }
+      if (ok) { close(); preset.onStarted?.(); if (href) location.hash = href.slice(1); pollLive(); }
     } },
     h("h2", {}, "New Task"), text,
     h("div", { class: "new-task-row" }, h("label", {}, icon("folder"), project), h("label", {}, icon("users-three"), agent)),

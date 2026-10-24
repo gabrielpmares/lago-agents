@@ -32,6 +32,7 @@ import documents
 import evals
 import features
 import ghcatalog
+import paperclip_import
 import github
 import goals
 import holds
@@ -1165,6 +1166,31 @@ class Api:
 
     def decide_skill(self, draft_id, approve):
         return {"ok": True, "message": _call(lambda: skill_sources.decide(draft_id, bool(approve)))}
+
+    # --- bringing a setup over from Paperclip (paperclip_import.py)
+
+    def paperclip_stage(self, zip=None, folder=None, github=None):
+        """Unpack a Paperclip company package: the exported zip (a data URL), a folder from
+        `paperclipai company export`, or a GitHub repository. Returns {"token"}."""
+        return {"token": _call(lambda: paperclip_import.stage(data_url=zip, folder=folder, github=github))}
+
+    def paperclip_preview(self, token):
+        return _call(lambda: paperclip_import.preview(token))
+
+    def paperclip_apply(self, token, agents=(), skills=(), projects=None, routines=(), tasks=()):
+        result = _call(lambda: paperclip_import.apply(token, agents=agents, skills=skills, projects=projects or {},
+                                                      routines=routines, tasks=tasks))
+        if any(line.startswith("agent ") for line in result["done"]):
+            agentdefs.catalog()  # re-read on the next call: the new agents show at once
+        return result
+
+    def imported_tasks(self):
+        """Tasks brought over from Paperclip, waiting for you to start them."""
+        return paperclip_import.imported_tasks()
+
+    def imported_task_status(self, task_id, status):
+        _call(lambda: paperclip_import.set_task_status(task_id, status))
+        return {"ok": True}
 
     # --- export and import
 

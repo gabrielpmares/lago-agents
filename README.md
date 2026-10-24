@@ -450,6 +450,25 @@ the right. His terminal shows on request (the terminal button).
 - **Templates.** `catalog/pipelines/*.md` are proven pipeline shapes the Conductor starts
   from.
 
+## Coming from Paperclip
+
+**Agents → Import** brings over what you built in [Paperclip](https://github.com/paperclipai/paperclip)
+(`paperclip_import.py`). Export your company there (company settings → **Export**, with agents,
+skills, projects and tasks), then choose the zip here. A folder from
+`paperclipai company export` or a GitHub repository holding a package works too. You see
+everything the package holds before anything is imported, and tick what you want:
+
+- **Agents** join the catalog with their instructions, model, and Claude or Codex.
+- **Skills** install like skills from GitHub. Paperclip's own API skills are left out.
+- **Projects** get a folder here, cloned from the project's repository if it isn't there yet.
+- **Routines** (recurring tasks) become routines, switched off until you turn them on. Schedules
+  Lago can't repeat on (monthly, webhooks) come in without one, for you to set.
+- **Open tasks** wait on the Tasks page under *Waiting from Paperclip*; **Start** opens New Task
+  with their text, project and agent filled in.
+
+Instructions that try to steer an agent are refused item by item, and the preview lists what
+doesn't carry over: who reports to whom, per-agent monthly budgets, heartbeats and secrets.
+
 ## Your phone
 
 The Android app in `android/` shows Lago Agents on your phone, from anywhere. Agents keep
