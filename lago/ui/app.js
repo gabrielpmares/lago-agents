@@ -43,13 +43,139 @@ const bridge = (() => {
   return {
     call(method, params = {}) {
       const id = ++seq;
-      return new Promise((resolve, reject) => {
+      const answer = new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject });
         window.webkit.messageHandlers.lago.postMessage(JSON.stringify({ id, method, params }));
       });
+      // Without the GTK window (macOS, --browser), the page shows agents' terminals itself.
+      if (method === "show_terminal" || method === "hide_terminal") {
+        return answer.then((result) => {
+          if (result?.page) result.shown ? pageTerminal.show(params.agent_id) : pageTerminal.hide();
+          else if (method === "hide_terminal" && document.documentElement.classList.contains("page-desk")) pageTerminal.hide();
+          return result;
+        });
+      }
+      return answer;
     },
   };
 })();
+
+/* ================================================================ the terminal, in the page
+
+   Where there's no GTK window to put a native terminal beside the page (macOS, or
+   `lago-agents --browser`), the page shows the agent's terminal itself: a real one (xterm.js)
+   attached to its tmux session through the app's own server (app_server.py), docked on the
+   right like the native one, with a handle to make it wider or narrower. */
+const pageTerminal = (() => {
+  let agent = null, term = null, fit = null, id = null, reader = null, pane = null, closing = false;
+  let sending = Promise.resolve();
+  const COLORS = { dark: { foreground: "#e8e9eb", background: "#0b0c0e", cursor: "#e8e9eb", selectionBackground: "#3a4a48" },
+    light: { foreground: "#16181b", background: "#fcfcfc", cursor: "#16181b", selectionBackground: "#cfe6e1" } };
+  const theme = () => COLORS[document.documentElement.dataset.theme === "light" || (!document.documentElement.dataset.theme
+    && matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark"];
+  const load = (src) => new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const tag = document.createElement("script");
+    tag.src = src; tag.onload = resolve; tag.onerror = reject;
+    document.head.append(tag);
+  });
+  async function ready() {
+    if (window.Terminal && window.FitAddon) return;
+    if (!document.querySelector('link[href="vendor/xterm/xterm.css"]')) {
+      const css = document.createElement("link");
+      css.rel = "stylesheet"; css.href = "vendor/xterm/xterm.css";
+      document.head.append(css);
+    }
+    await load("vendor/xterm/xterm.js");
+    await load("vendor/xterm/addon-fit.js");
+  }
+  const post = (path, body) => fetch(path, { method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-Lago-Web": "1" }, body: JSON.stringify(body) });
+  function makePane() {
+    if (pane) return pane;
+    const screen = h("div", { class: "page-terminal-screen" });
+    const handle = h("div", { class: "page-terminal-handle", role: "separator", "aria-orientation": "vertical", "aria-label": "Resize the terminal" });
+    pane = h("aside", { class: "page-terminal", "aria-label": "Terminal", hidden: true }, handle, screen);
+    handle.addEventListener("pointerdown", (event) => {
+      handle.setPointerCapture(event.pointerId);
+      const move = (e) => {
+        const width = Math.min(Math.max(window.innerWidth - e.clientX, 320), window.innerWidth - 480);
+        document.documentElement.style.setProperty("--page-term-w", `${width}px`);
+      };
+      const up = () => { handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", up); refit(); };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+    });
+    document.body.append(pane);
+    new ResizeObserver(() => refit()).observe(screen);
+    return pane;
+  }
+  let fitTimer = null;
+  function refit() {
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(() => {
+      if (!term || !fit || pane.hidden) return;
+      try { fit.fit(); } catch { return; }
+      if (id) post("/v1/term/resize", { id, cols: term.cols, rows: term.rows }).catch(() => {});
+    }, 80);
+  }
+  async function show(agentId) {
+    if (agent === agentId && term && !pane?.hidden) return;
+    await ready();
+    hide();
+    closing = false;
+    agent = agentId;
+    makePane().hidden = false;
+    document.documentElement.classList.add("with-page-terminal");
+    const screen = pane.querySelector(".page-terminal-screen");
+    screen.replaceChildren();
+    term = new window.Terminal({ fontFamily: "ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', monospace", fontSize: 13,
+      cursorBlink: true, scrollback: 0, allowProposedApi: false, theme: theme(), macOptionIsMeta: true });
+    fit = new window.FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open(screen);
+    // Ctrl+Space talks to Lago even while the terminal has the keyboard.
+    term.attachCustomKeyEventHandler((e) => !(e.ctrlKey && (e.code === "Space" || e.key === " ")));
+    term.onData((data) => { if (id) sending = sending.then(() => post("/v1/term/input", { id, data })).catch(() => {}); });
+    try { fit.fit(); } catch { /* sized on the next resize */ }
+    const mine = agentId;
+    let response;
+    try {
+      response = await fetch(`/v1/term?agent=${encodeURIComponent(agentId)}&cols=${term.cols}&rows=${term.rows}`, { credentials: "same-origin" });
+    } catch { term?.write("\r\n\x1b[2m[Couldn't reach the terminal.]\x1b[0m\r\n"); return; }
+    if (agent !== mine) return;
+    if (!response.ok) { term.write(`\r\n\x1b[2m[${(await response.json().catch(() => ({}))).error || "This session isn't running."}]\x1b[0m\r\n`); return; }
+    id = response.headers.get("X-Term-Id");
+    reader = response.body.getReader();
+    term.focus();
+    for (;;) {
+      let chunk;
+      try { chunk = await reader.read(); } catch { break; }
+      if (chunk.done || agent !== mine) break;
+      term?.write(chunk.value);
+    }
+    if (agent !== mine || closing) return;
+    id = null;
+    const running = await bridge.call("terminal_running", { terminal_id: mine }).then((r) => r.running).catch(() => false);
+    if (!running) { hide(); window.lagoTerminalEnded?.(mine); }
+    else term?.write("\r\n\x1b[2m[This session has ended.]\x1b[0m\r\n");
+  }
+  function hide() {
+    closing = true;
+    try { reader?.cancel(); } catch { /* already closed */ }
+    reader = null; id = null; agent = null;
+    term?.dispose(); term = null; fit = null;
+    if (pane) pane.hidden = true;
+    document.documentElement.classList.remove("with-page-terminal");
+  }
+  return { show, hide, retheme: () => { if (term) term.options.theme = theme(); } };
+})();
+document.addEventListener("keydown", (event) => {
+  if (event.ctrlKey && (event.code === "Space" || event.key === " ") && document.documentElement.classList.contains("page-desk")) {
+    event.preventDefault();
+    window.lagoTalkShortcut?.();
+  }
+}, true);
 
 /* ================================================================ feedback */
 
@@ -7113,6 +7239,7 @@ window.addEventListener("hashchange", () => { navigate(); renderTopbar(); });
 function applyTheme(theme) {
   if (theme) document.documentElement.dataset.theme = theme;
   else delete document.documentElement.dataset.theme;
+  setTimeout(() => pageTerminal.retheme(), 0);
   const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
   document.querySelector('meta[name="theme-color"]').setAttribute("content", bg);
 }

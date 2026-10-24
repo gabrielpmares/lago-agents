@@ -70,7 +70,6 @@ LOG_PATH = FOLDER / "access.log"
 APP_DIR = FOLDER / "app"          # the published Android app: LagoAgents.apk and app.json
 UI_DIR = Path(__file__).resolve().parent / "ui"
 SERVICE = "lago-agents-remote.service"
-UNIT_PATH = Path.home() / ".config" / "systemd" / "user" / SERVICE
 
 DEFAULT_PORT = 7443
 DEFAULT_WEB_PORT = 7480   # browsers on the tailnet (company.py): plain HTTP inside WireGuard
@@ -241,7 +240,7 @@ def pretty_fingerprint(fp):
 
 def tailscale_ip():
     try:
-        proc = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5)
+        proc = subprocess.run([_tailscale(), "ip", "-4"], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         return None
     lines = proc.stdout.split()
@@ -251,7 +250,7 @@ def tailscale_ip():
 def tailscale_name():
     """This machine's MagicDNS name, if Tailscale has one."""
     try:
-        proc = subprocess.run(["tailscale", "status", "--json", "--peers=false"],
+        proc = subprocess.run([_tailscale(), "status", "--json", "--peers=false"],
                               capture_output=True, text=True, timeout=5)
         name = json.loads(proc.stdout)["Self"]["DNSName"].rstrip(".")
     except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
@@ -490,47 +489,35 @@ def publish_app(apk, code, name, notes=""):
 
 # ---------------------------------------------------------------- the service
 
+def _tailscale():
+    import desktop
+    return desktop.tailscale_cli()
+
+
 def service_state():
-    try:
-        active = subprocess.run(["systemctl", "--user", "is-active", SERVICE], capture_output=True,
-                                text=True, timeout=5).stdout.strip()
-        enabled = subprocess.run(["systemctl", "--user", "is-enabled", SERVICE], capture_output=True,
-                                 text=True, timeout=5).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return {"active": False, "enabled": False}
-    return {"active": active == "active", "enabled": enabled == "enabled"}
+    import desktop
+    return desktop.service_state(SERVICE)
 
 
 def write_unit():
-    UNIT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    UNIT_PATH.write_text(f"""[Unit]
-Description=Lago Agents: the phone app's private server (Tailscale only)
-After=network-online.target tailscaled.service
-
-[Service]
-ExecStart=/usr/bin/python3 "{Path(__file__).resolve()}" serve
-Environment="PATH={os.environ.get('PATH', '/usr/bin:/bin')}"
-Restart=always
-RestartSec=10
-Nice=5
-
-[Install]
-WantedBy=default.target
-""")
-    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=15)
+    import desktop
+    desktop.service_write(SERVICE, [sys.executable, str(Path(__file__).resolve()), "serve"],
+                          "Lago Agents: the phone app's private server (Tailscale only)",
+                          after="network-online.target tailscaled.service")
 
 
 def set_enabled(on):
-    if on:
-        if not settings()["password"]:
-            raise RemoteError("Set the phone password first")
-        write_unit()
-        cmd = ["systemctl", "--user", "enable", "--now", SERVICE]
-    else:
-        cmd = ["systemctl", "--user", "disable", "--now", SERVICE]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if proc.returncode != 0:
-        raise RemoteError(proc.stderr.strip() or "systemctl failed")
+    import desktop
+    try:
+        if on:
+            if not settings()["password"]:
+                raise RemoteError("Set the phone password first")
+            write_unit()
+            desktop.service_enable(SERVICE)
+        else:
+            desktop.service_disable(SERVICE)
+    except desktop.ServiceError as error:
+        raise RemoteError(str(error)) from error
 
 
 def status():
@@ -1455,15 +1442,16 @@ def set_web(on):
     """Switch browser access on or off, restarting the service that serves it (it also serves
     the phone, which keeps working if its password is set)."""
     _save_settings(web=bool(on))
-    if on or settings()["password"]:
-        write_unit()
-        cmds = [["systemctl", "--user", "enable", SERVICE], ["systemctl", "--user", "restart", SERVICE]]
-    else:
-        cmds = [["systemctl", "--user", "disable", "--now", SERVICE]]
-    for cmd in cmds:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if proc.returncode != 0:
-            raise RemoteError(proc.stderr.strip() or "systemctl failed")
+    import desktop
+    try:
+        if on or settings()["password"]:
+            write_unit()
+            desktop.service_enable(SERVICE, start=False)
+            desktop.service_restart(SERVICE)
+        else:
+            desktop.service_disable(SERVICE)
+    except desktop.ServiceError as error:
+        raise RemoteError(str(error)) from error
 
 
 def web_url(conf=None):

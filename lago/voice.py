@@ -18,6 +18,7 @@ import shlex
 import signal
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -73,6 +74,11 @@ KOKORO_VOICES = {"kokoro:bm_george": "George (British, offline)",
                  "kokoro:af_jessica": "Jessica (American, offline)",
                  "kokoro:af_river": "River (American, offline)"}
 ESPEAK_VOICES = {"English (America)": "eSpeak (synthetic, offline)"}
+# macOS's own voices, offline (`say`); the ones every Mac has in English.
+SAY_VOICES = {"say:Samantha": "Samantha (macOS, offline)", "say:Daniel": "Daniel (macOS, offline)",
+              "say:Karen": "Karen (macOS, offline)", "say:Fred": "Fred (macOS, synthetic, offline)"}
+# Speak one announcement at a time: each waits for this lock (flock(1) isn't on every system).
+QUEUE_PY = "import fcntl, subprocess, sys; f = open(sys.argv[1], 'a'); fcntl.flock(f, fcntl.LOCK_EX); sys.exit(subprocess.call(sys.argv[2:]))"
 # Effects speak.py can put on Kokoro and Edge voices (its EFFECTS has the filters): robots,
 # places and devices the voice comes through, creatures, and moods.
 EFFECTS = {"": "None", "ai-assistant": "AI assistant", "retro-computer": "Retro computer",
@@ -130,6 +136,8 @@ def voices():
                       for vid, label in KOKORO_VOICES.items()]
     if shutil.which("spd-say"):
         found += [{"id": vid, "label": label, "offline": True} for vid, label in ESPEAK_VOICES.items()]
+    if shutil.which("say") and sys.platform == "darwin":
+        found += [{"id": vid, "label": label, "offline": True} for vid, label in SAY_VOICES.items()]
     return found
 
 
@@ -152,10 +160,13 @@ WAKE_SOUNDS = {"soft": "Soft tone (two notes)", "blip": "Short blip", "low": "Lo
                "attention": "Attention (two quick notes, then higher)",
                "success": "Success (four rising notes)", "problem": "Problem (three falling notes)",
                "nudge": "Nudge (a short, louder blip)",
-               "/usr/share/sounds/Yaru/stereo/message.oga": "Ubuntu message",
-               "/usr/share/sounds/freedesktop/stereo/bell.oga": "Bell",
-               "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga": "Original chime",
-               "/usr/share/sounds/freedesktop/stereo/complete.oga": "Complete chime",
+               **({"/System/Library/Sounds/Glass.aiff": "Glass", "/System/Library/Sounds/Ping.aiff": "Ping",
+                   "/System/Library/Sounds/Hero.aiff": "Hero", "/System/Library/Sounds/Purr.aiff": "Purr"}
+                  if sys.platform == "darwin" else
+                  {"/usr/share/sounds/Yaru/stereo/message.oga": "Ubuntu message",
+                   "/usr/share/sounds/freedesktop/stereo/bell.oga": "Bell",
+                   "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga": "Original chime",
+                   "/usr/share/sounds/freedesktop/stereo/complete.oga": "Complete chime"}),
                "": "None"}
 
 
@@ -208,11 +219,17 @@ def _reap(proc):
 
 def _alive(pid):
     """The process runs (a zombie, ended but not yet collected, doesn't count)."""
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-    except OSError:
+    stat = Path(f"/proc/{pid}/stat")
+    if stat.exists():
+        try:
+            return stat.read_text().rpartition(")")[2].split()[0] != "Z"
+        except OSError:
+            return False
+    try:  # macOS: no /proc
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(int(pid))], capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
         return False
-    return stat.rpartition(")")[2].split()[0] != "Z"
+    return bool(state) and not state.startswith("Z")
 
 
 def settings(config):
@@ -334,7 +351,8 @@ def hush():
     HUSH_STAMP.touch()
     for group in groups:
         try:
-            if str(LOCK_FILE).encode() in Path(f"/proc/{group}/cmdline").read_bytes():
+            import desktop
+            if str(LOCK_FILE) in " ".join(desktop.process_command(group)):
                 os.killpg(group, signal.SIGTERM)
         except OSError:
             pass  # already finished
@@ -371,7 +389,7 @@ def say(text, voice=None, category="progress"):
         return False
     voice = {**DEFAULTS, **(voice or {})}
     available = [v["id"] for v in voices()]
-    if not available or not shutil.which("flock"):
+    if not available:
         return False
     chosen = voice["voice"] if voice["voice"] in available else available[0]
     rate = max(-100, min(100, int(voice.get("rate") or 0)))
@@ -380,7 +398,15 @@ def say(text, voice=None, category="progress"):
     if to_phone():
         PHONE_QUEUE.mkdir(mode=0o700, exist_ok=True)
         out = PHONE_QUEUE / f"{time.time_ns()}-{os.getpid()}"  # speak.py adds the extension
-    if chosen in ESPEAK_VOICES:
+    if chosen in SAY_VOICES:
+        name = chosen.partition(":")[2]
+        words = str(175 + rate)
+        if out:
+            command = shlex.join(["say", "-v", name, "-r", words, "-o", f"{out}.wav", "--data-format=LEI16@22050", "--", text])
+        else:
+            marker = shlex.quote(str(PLAYING_FILE))
+            command = f"echo $$ > {marker}; " + shlex.join(["say", "-v", name, "-r", words, "--", text]) + f"; rm -f {marker}"
+    elif chosen in ESPEAK_VOICES:
         command = _espeak(text, rate, volume, chosen)
         if not out:  # spd-say starts at once: mark it playing for its whole run
             marker = shlex.quote(str(PLAYING_FILE))
@@ -406,8 +432,10 @@ def say(text, voice=None, category="progress"):
         command = shlex.join(speak + ["--", text])
         if shutil.which("spd-say") and not out:
             command += " || " + _espeak(text, rate, volume)  # last resort: say it somehow
+        elif sys.platform == "darwin" and shutil.which("say") and not out:
+            command += " || " + shlex.join(["say", "--", text])
     try:
-        proc = subprocess.Popen(["flock", str(LOCK_FILE), "sh", "-c", command],
+        proc = subprocess.Popen([sys.executable, "-c", QUEUE_PY, str(LOCK_FILE), "sh", "-c", command],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:

@@ -113,6 +113,8 @@ PLAYER_ROLE = "Assistant"
 
 def play_command(path):
     """The command that plays `path` as Lago, or None when there's no player."""
+    if shutil.which("afplay"):  # macOS
+        return ["afplay", str(path)]
     if shutil.which("pw-play"):
         return ["pw-play", f"--media-role={PLAYER_ROLE}", "-P",
                 f'{{ application.name = "{PLAYER_NAME}" application.id = "lago-agents" }}', str(path)]

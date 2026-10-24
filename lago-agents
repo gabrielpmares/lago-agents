@@ -1,3 +1,8 @@
 #!/bin/sh
-# Start Lago Agents (the app's code is in lago/).
-exec python3 "$(dirname "$(readlink -f "$0")")/lago/lago_agents.py" "$@"
+# Start Lago Agents (the app's code is in lago/). On macOS it opens in its own window
+# (pywebview, from the app's venv when install.sh made one) or a browser app window.
+HERE=$(python3 -c 'import os, sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")
+PYTHON=python3
+VENV="${XDG_STATE_HOME:-$HOME/.local/state}/lago-agents/app-venv/bin/python"
+[ -x "$VENV" ] && PYTHON="$VENV"
+exec "$PYTHON" "$HERE/lago/lago_agents.py" "$@"

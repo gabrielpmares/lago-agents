@@ -509,7 +509,7 @@ class Api:
         if not check["ok"]:
             raise ApiError(check["message"])
         company.join(url)
-        subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        desktop.open_target(url)
         return {"ok": True, "message": check["message"]}
 
     def finish_onboarding(self, name, project=None, provider="claude", company_name=""):
@@ -1622,11 +1622,8 @@ class Api:
         """Open a file you sent Lago in its usual app."""
         if not attachments.kept(path):
             raise ApiError("That file is no longer kept")
-        try:
-            subprocess.Popen(["xdg-open", str(path)], start_new_session=True,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError as error:
-            raise ApiError(f"Couldn't open it: {error}") from error
+        if not desktop.open_target(str(path)):
+            raise ApiError("Couldn't open it")
         return {"ok": True}
 
     def set_talk(self, on):
@@ -2252,11 +2249,8 @@ class Api:
             raise ApiError(f"Couldn't find {path} in the sessions' or projects' folders")
         if found.suffix.lower() in RUNNABLE_SUFFIXES or (os.access(found, os.X_OK) and found.suffix.lower() not in VIEWABLE_SUFFIXES):
             raise ApiError(f"{found.name} is a program: open it from your file manager if you mean to")
-        try:
-            subprocess.Popen(["xdg-open", str(found)], start_new_session=True,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError as error:
-            raise ApiError(f"Couldn't open it: {error}") from error
+        if not desktop.open_target(str(found)):
+            raise ApiError("Couldn't open it")
         return {"ok": True, "message": f"Opened {found.name}", "path": str(found)}
 
     def read_file(self, path, sessions=None):
@@ -2278,11 +2272,8 @@ class Api:
         """Open a link in your browser (the app window only shows its own pages)."""
         if not str(url).startswith(("http://", "https://")):
             raise ApiError("Only web links can be opened")
-        try:
-            subprocess.Popen(["xdg-open", url], start_new_session=True,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError as error:
-            raise ApiError(f"Couldn't open the browser: {error}") from error
+        if not desktop.open_target(url):
+            raise ApiError("Couldn't open the browser")
         return {"ok": True}
 
     # --- your phone (remote.py). Named remote_*, so the phone itself can't call them.
@@ -2477,33 +2468,20 @@ class Api:
 
     def sessions(self):
         """Claude Code sessions on this machine that Lago Agents didn't start."""
-        uid = os.getuid()
         found = []
-        for proc in Path("/proc").iterdir():
-            if not proc.name.isdigit():
+        for proc in desktop.claude_processes():
+            words = proc["args"]
+            if proc["lago"] or any(w in ("mcp", "--version", "-p", "--print") for w in words[1:2]):
                 continue
-            try:
-                if proc.stat().st_uid != uid or (proc / "comm").read_text().strip() != "claude":
-                    continue
-                if b"LAGO_AGENT_ID=" in (proc / "environ").read_bytes():
-                    continue
-                args = (proc / "cmdline").read_bytes().split(b"\0")
-                cwd = os.readlink(proc / "cwd")
-                started = proc.stat().st_mtime
-            except OSError:
-                continue
-            words = [a.decode(errors="replace") for a in args if a]
-            if any(w in ("mcp", "--version", "-p", "--print") for w in words[1:2]):
-                continue
-            found.append({"pid": int(proc.name), "cwd": cwd, "project": Path(cwd).name,
-                          "args": " ".join(words[1:])[:200], "started": started})
+            found.append({"pid": proc["pid"], "cwd": proc["cwd"], "project": Path(proc["cwd"]).name if proc["cwd"] else "",
+                          "args": " ".join(words[1:])[:200], "started": proc["started"]})
         return sorted(found, key=lambda s: -s["started"])
 
     def stop_session(self, pid):
         if not isinstance(pid, int) or pid <= 1:
             raise ApiError("Invalid process id")
         try:
-            if (Path(f"/proc/{pid}/comm").read_text().strip() != "claude"):
+            if desktop.process_name(pid) != "claude":
                 raise ApiError("That process isn't a Claude Code session anymore")
             os.kill(pid, signal.SIGTERM)
         except OSError as error:

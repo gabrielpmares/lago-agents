@@ -19,13 +19,13 @@ sys.path.insert(0, str(APP))
 import config_store  # noqa: E402
 import subprocess  # noqa: E402
 
-# Nothing a test does may start, stop or enable your real services: every systemctl call
-# answers as if there were no such service.
+# Nothing a test does may start, stop or enable your real services: every systemctl (or, on
+# macOS, launchctl) call answers as if there were no such service.
 _real_run = subprocess.run
 
 
 def _no_systemctl(args, *rest, **kwargs):
-    if isinstance(args, (list, tuple)) and args and Path(str(args[0])).name == "systemctl":
+    if isinstance(args, (list, tuple)) and args and Path(str(args[0])).name in ("systemctl", "launchctl"):
         text = kwargs.get("text") or kwargs.get("universal_newlines")
         empty = "" if text else b""
         return subprocess.CompletedProcess(args, 1, empty, "no services in tests" if text else b"no services in tests")
@@ -33,6 +33,13 @@ def _no_systemctl(args, *rest, **kwargs):
 
 
 subprocess.run = _no_systemctl
+
+import desktop  # noqa: E402
+
+# Service definitions a test writes land here, not in ~/.config/systemd or ~/Library/LaunchAgents.
+desktop.SYSTEMD_DIR = TMP / "systemd-user"
+desktop.LAUNCH_DIR = TMP / "launch-agents"
+desktop.LAUNCH_LOGS = TMP / "launch-logs"
 
 config_store.CONFIG_PATH = TMP / "config.json"
 
@@ -42,6 +49,26 @@ import voice  # noqa: E402
 
 voice.say = lambda *a, **k: False
 voice.play_file = lambda *a, **k: None
+REAL_TMUX = runner.tmux  # for a test that runs tmux on a server of its own (it sets runner.SOCKET first)
+
+
+_tmux_sockets = set()
+
+
+def note_tmux():
+    """Remember where the test's own tmux server keeps its socket (call once it runs)."""
+    ok, path = REAL_TMUX("display-message", "-p", "#{socket_path}")
+    if ok and path:
+        _tmux_sockets.add(path)
+
+
+def end_tmux():
+    """Stop the test's own tmux server and remove its socket file."""
+    note_tmux()
+    REAL_TMUX("kill-server")
+    for path in _tmux_sockets:
+        Path(path).unlink(missing_ok=True)
+    _tmux_sockets.clear()
 runner.tmux = lambda *a, **k: (False, "tests never use tmux")
 runner.running_agents = lambda: set()
 runner.is_running = lambda agent_id: False

@@ -41,7 +41,7 @@ def recording():
 def start():
     global _recorder, _started
     if not available():
-        raise MicError("Voice input needs a recorder (pw-record, parecord or arecord) and the speech venv in "
+        raise MicError("Voice input needs a recorder (pw-record, parecord or arecord; ffmpeg on a Mac) and the speech venv in "
                        "~/.local/share/lago-agents/tts with faster-whisper.")
     with _lock:
         if recording():

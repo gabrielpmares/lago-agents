@@ -1,8 +1,8 @@
 """Secrets for agents, kept in your desktop keyring and handed to the agents that need them.
 
 A secret has a name, the environment variable agents see it as, and a project (or none, for
-every agent). Its value lives only in the keyring (libsecret, encrypted at rest and unlocked
-when you log in); Lago Agents keeps the name, variable, project and an access log in hub.db,
+every agent). Its value lives only in the keyring (libsecret on Linux, the Keychain on macOS:
+encrypted at rest and unlocked when you log in); Lago Agents keeps the name, variable, project and an access log in hub.db,
 never the value, and nothing shows a value again once it's saved. When an agent of that
 project starts, its launch script asks `vault.py --env <agent>` for its variables, so they
 reach the process without being written to disk; each hand-out is logged.
@@ -11,6 +11,7 @@ Lago and the agents can list secret names, never read values through Lago's tool
 """
 
 import re
+import subprocess
 import sys
 import time
 
@@ -55,13 +56,39 @@ class KeyringBackend:
         self.Secret.password_clear_sync(self.schema, self._attrs(name, project), None)
 
 
+class MacKeychainBackend:
+    """The macOS Keychain, through its `security` command. A value travels on stdin (its
+    interactive mode), never on a command line where other programs could see it."""
+    SERVICE = "Lago Agents"
+
+    def _account(self, name, project):
+        return f"{project or '-'}/{name}"
+
+    def store(self, name, project, value):
+        quote = lambda text: '"' + str(text).replace("\\", "\\\\").replace('"', '\\"') + '"'  # noqa: E731
+        command = (f"add-generic-password -U -s {quote(self.SERVICE)} -a {quote(self._account(name, project))} "
+                   f"-l {quote('Lago Agents: ' + name)} -w {quote(value)}\n")
+        proc = subprocess.run(["security", "-i"], input=command, capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0 or "error" in (proc.stderr or "").lower():
+            raise VaultError("The Keychain didn't save it: " + (proc.stderr or proc.stdout).strip()[:200])
+
+    def lookup(self, name, project):
+        proc = subprocess.run(["security", "find-generic-password", "-s", self.SERVICE, "-a", self._account(name, project), "-w"],
+                              capture_output=True, text=True, timeout=30)
+        return proc.stdout.rstrip("\n") if proc.returncode == 0 else None
+
+    def clear(self, name, project):
+        subprocess.run(["security", "delete-generic-password", "-s", self.SERVICE, "-a", self._account(name, project)],
+                       capture_output=True, timeout=30)
+
+
 _backend = None
 
 
 def backend():
     global _backend
     if _backend is None:
-        _backend = KeyringBackend()
+        _backend = MacKeychainBackend() if sys.platform == "darwin" else KeyringBackend()
     return _backend
 
 

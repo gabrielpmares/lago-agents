@@ -30,7 +30,6 @@ SOCKET = FOLDER / "tailscaled.sock"
 LOGIN_LOG = FOLDER / "login.log"
 BIN = Path("/snap/tailscale/current/bin")  # Tailscale's snap ships both programs; else PATH, sbin
 SERVICE = "lago-agents-company-tailnet.service"
-UNIT_PATH = Path.home() / ".config" / "systemd" / "user" / SERVICE
 WEB_SOCKET = FOLDER / "web.sock"  # remote.py listens here, behind `tailscale serve`
 HOSTNAME = f"lago-{socket.gethostname()}"[:40]
 
@@ -46,6 +45,8 @@ def _program(name):
     import shutil
     found = shutil.which(name) or next((f"{d}/{name}" for d in ("/usr/sbin", "/usr/local/sbin", "/sbin")
                                          if os.access(f"{d}/{name}", os.X_OK)), None)
+    if not found and name == "tailscale" and Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale").exists():
+        found = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
     if not found:
         raise TailnetError(f"Tailscale's {name} isn't installed")
     return found
@@ -59,38 +60,32 @@ def cli(*args, timeout=20):
 
 
 def write_unit():
+    import desktop
     FOLDER.mkdir(parents=True, exist_ok=True)
     FOLDER.chmod(0o700)
-    UNIT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    UNIT_PATH.write_text(f"""[Unit]
-Description=Lago Agents: the company's own Tailscale connection (separate from your personal tailnet)
-After=network-online.target
-
-[Service]
-ExecStart={_program('tailscaled')} --tun=userspace-networking --statedir={FOLDER} --socket={SOCKET} --port=0
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-""")
+    desktop.service_write(SERVICE, [_program("tailscaled"), "--tun=userspace-networking", f"--statedir={FOLDER}",
+                                    f"--socket={SOCKET}", "--port=0"],
+                          "Lago Agents: the company's own Tailscale connection (separate from your personal tailnet)",
+                          restart="on-failure", after="network-online.target")
 
 
 def start():
+    import desktop
     write_unit()
-    for cmd in (["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", "--now", SERVICE]):
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if proc.returncode != 0:
-            raise TailnetError(proc.stderr.strip() or "systemctl failed")
+    try:
+        desktop.service_enable(SERVICE)
+    except desktop.ServiceError as error:
+        raise TailnetError(str(error)) from error
     for _ in range(30):  # wait for its socket
         if SOCKET.exists():
             return
         time.sleep(0.5)
-    raise TailnetError("The company connection didn't start (journalctl --user -u lago-agents-company-tailnet)")
+    raise TailnetError("The company connection didn't start (see its service's log)")
 
 
 def stop():
-    subprocess.run(["systemctl", "--user", "disable", "--now", SERVICE], capture_output=True, timeout=30)
+    import desktop
+    desktop.service_disable(SERVICE)
 
 
 def status():

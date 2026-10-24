@@ -22,6 +22,7 @@ import subprocess
 import time
 
 import config_store
+import desktop
 import hub
 
 ROLES = ("watch", "operate", "admin")
@@ -44,7 +45,7 @@ def whois(ip):
     if cached and now - cached[0] < WHOIS_FRESH:
         return cached[1]
     try:
-        out = subprocess.run(["tailscale", "whois", "--json", ip], capture_output=True, text=True, timeout=10)
+        out = subprocess.run([desktop.tailscale_cli(), "whois", "--json", ip], capture_output=True, text=True, timeout=10)
         data = json.loads(out.stdout) if out.returncode == 0 else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
         data = None
@@ -71,7 +72,7 @@ def company():
 def this_machine_login():
     """The Tailscale login of this computer's user, or "" when Tailscale isn't up."""
     try:
-        out = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5)
+        out = subprocess.run([desktop.tailscale_cli(), "ip", "-4"], capture_output=True, text=True, timeout=5)
         ip = out.stdout.split()[0] if out.returncode == 0 and out.stdout.split() else ""
     except (OSError, subprocess.TimeoutExpired):
         ip = ""

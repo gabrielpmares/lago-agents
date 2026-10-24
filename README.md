@@ -49,9 +49,14 @@ changes.
 
 ## Requirements
 
-Lago Agents runs on Linux for now; macOS is planned.
+Lago Agents runs on Linux and macOS.
 
-Any Linux desktop with GTK 3 and WebKit2GTK 4.1 (GNOME, KDE Plasma, Xfce, Cinnamon...,
+**macOS** 12 or newer, with [Homebrew](https://brew.sh): Python 3.11+, tmux and git
+(`brew install python tmux git`), and the [Claude Code](https://claude.com/claude-code) CLI,
+logged in. Optional: `gh`, Tailscale, Docker, and `ffmpeg` for talking to Lago. See
+[On a Mac](#on-a-mac) below.
+
+**Linux:** any desktop with GTK 3 and WebKit2GTK 4.1 (GNOME, KDE Plasma, Xfce, Cinnamon...,
 on Wayland or X11), plus:
 
 - Python 3.11+ with PyGObject, tmux, git and the [Claude Code](https://claude.com/claude-code)
@@ -89,6 +94,31 @@ Then, from this folder:
 ```
 
 or just run `./lago-agents`. The first start asks your name and your first project.
+
+### On a Mac
+
+```bash
+brew install python tmux git          # and Claude Code: npm install -g @anthropic-ai/claude-code
+./install.sh                          # makes "Lago Agents" in ~/Applications, links your agent
+                                      # definitions and skills, starts the background scheduler
+```
+
+Open Lago Agents from Spotlight, Launchpad or `~/Applications`. It's the same app as on Linux
+in a window of its own (`app_server.py`: it serves the page to a WebKit window on this Mac
+only, behind a secret), with each agent's terminal live in the page. If the window library
+(pywebview, in the app's own venv) couldn't install, it opens in Chrome as an app window, or in
+your browser. On Linux, `./lago-agents --browser` opens it the same way.
+
+What's different on a Mac:
+
+| | macOS |
+|---|---|
+| Secrets | The Keychain ("Lago Agents" entries) |
+| Background scheduler, phone access, "Hey Lago" | launchd agents in `~/Library/LaunchAgents` (`com.lago-agents.*`), logs in `~/Library/Logs/lago-agents` |
+| Lago's voice | `afplay`; macOS's own voices (`say`) work offline with no setup |
+| Talking to Lago | `brew install ffmpeg`, plus the speech venv below; macOS asks once for the microphone |
+| Terminal windows | iTerm if it's installed, else Terminal |
+| Agents built from GitHub | Their install scripts run without the bubblewrap sandbox (there's none on macOS): read them before you approve |
 
 For the voice (optional), install a recorder and player (PipeWire's `pw-record`/`pw-play`,
 or PulseAudio's `parecord`/`paplay`, or ALSA's `arecord`), `ffmpeg` and, as a fallback

@@ -1847,3 +1847,15 @@ a.mini-avatar:focus-visible { box-shadow: var(--focus); outline: none; }
 .backlog-dialog h3 { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 13.5px; }
 .backlog-doc { margin: 0; padding: 10px 12px; border-radius: var(--r-control); background: var(--surface-2); white-space: pre-wrap; font-size: 12.5px; max-height: 260px; overflow: auto; }
 @media (max-width: 700px) { .backlog-row { padding-left: calc(var(--depth, 0) * 12px); } }
+
+/* ---------------------------------------------------------------- the terminal, in the page (app_server.py) */
+:root { --page-term-w: 50vw; }
+.with-page-terminal .shell { width: calc(100vw - var(--page-term-w)); }
+.page-terminal { position: fixed; inset: 0 0 0 auto; width: var(--page-term-w); display: flex; z-index: 40;
+  background: #0b0c0e; border-left: 1px solid var(--border); }
+:root[data-theme="light"] .page-terminal { background: #fcfcfc; }
+.page-terminal-handle { flex: none; width: 6px; margin-left: -3px; cursor: col-resize; touch-action: none; }
+.page-terminal-handle:hover, .page-terminal-handle:active { background: var(--accent-line); }
+.page-terminal-screen { flex: 1; min-width: 0; padding: 6px 4px 4px 8px; }
+.page-terminal-screen .xterm { height: 100%; }
+@media (max-width: 900px) { .with-page-terminal .shell { width: 100vw; } .page-terminal { width: 100vw; } }

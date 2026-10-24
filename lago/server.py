@@ -310,6 +310,6 @@ def open_site(project_id, project, server_id=None):
                                   f"{SITE_WAIT_SECONDS // 60} minutes. Output: {log}")
             time.sleep(3)
         started = True
-    subprocess.Popen(["xdg-open", url], start_new_session=True,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    import desktop
+    desktop.open_target(url)
     return {"url": url, "started": started}

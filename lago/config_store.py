@@ -141,10 +141,10 @@ def bypass_unlocked():
     """Whether you typed your password since the app last opened (the app is still running)."""
     try:
         pid = int(BYPASS_UNLOCKED.read_text())
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
     except (OSError, ValueError):
         return False
-    return b"lago_agents.py" in cmdline
+    import desktop
+    return any(Path(word).name in ("lago_agents.py", "app_server.py") for word in desktop.process_command(pid))
 
 
 def bypass_ready(config):

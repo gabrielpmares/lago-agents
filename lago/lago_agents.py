@@ -7,6 +7,7 @@ The page talks to Python through a `lago` script message handler (see ui/app.js)
 
     lago_agents.py                  open on the Overview
     lago_agents.py agent/<id>       open on a page (any #hash of the UI)
+    lago_agents.py --browser        without GTK, in a browser window (always, on macOS)
 
 Set LAGO_DEBUG=1 to enable the web inspector and print the page's console to stdout.
 With LAGO_DEBUG=1, LAGO_SNAPSHOT=<file.png> saves a picture of the page after 5 seconds
@@ -22,7 +23,27 @@ import sys
 import threading
 from pathlib import Path
 
-import gi
+
+def _gtk_available():
+    try:
+        import gi
+        for name, version in (("Gtk", "3.0"), ("WebKit2", "4.1"), ("Vte", "2.91")):
+            gi.require_version(name, version)
+        from gi.repository import Gtk, Vte, WebKit2  # noqa: F401
+        return True
+    except (ImportError, ValueError):
+        return False
+
+
+# Without GTK (macOS, or `lago-agents --browser`): the same app, served to a window (app_server.py).
+if __name__ == "__main__" and (sys.platform == "darwin" or "--browser" in sys.argv or not _gtk_available()):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import app_server
+    views = [a for a in sys.argv[1:] if not a.startswith("--")]
+    app_server.serve(views[0].lstrip("#") if views else "")
+    sys.exit(0)
+
+import gi  # noqa: E402
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
@@ -277,7 +298,8 @@ class LagoAgentsWindow(Gtk.Window):
 def main():
     GLib.set_prgname("lago-agents")
     GLib.set_application_name("Lago Agents")
-    start_view = sys.argv[1].lstrip("#") if len(sys.argv) > 1 else ""
+    views = [a for a in sys.argv[1:] if not a.startswith("--")]
+    start_view = views[0].lstrip("#") if views else ""
     LagoAgentsWindow(start_view).show_all()
     Gtk.main()
 

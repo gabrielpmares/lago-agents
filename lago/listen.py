@@ -38,7 +38,6 @@ import personas  # noqa: E402
 import voice  # noqa: E402
 
 SERVICE = "lago-agents-listen.service"
-UNIT_PATH = Path.home() / ".config" / "systemd" / "user" / SERVICE
 
 RATE = 16000
 FRAME = 512                       # samples per VAD frame (32 ms)
@@ -71,50 +70,25 @@ class ListenError(Exception):
 # ---------------------------------------------------------------- the service
 
 def service_running():
-    try:
-        return subprocess.run(["systemctl", "--user", "is-active", "--quiet", SERVICE],
-                              capture_output=True, timeout=5).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-
-
-def _systemctl(*args):
-    try:
-        return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ListenError(f"Listening needs systemd user services: {error}") from error
+    import desktop
+    return desktop.service_state(SERVICE)["active"]
 
 
 def set_service(on):
-    """On: write the unit (it follows this checkout) and start it. Off: stop it and remove it."""
-    if on:
-        if not voice.TTS_PYTHON.exists():
-            raise ListenError("Listening needs the speech add-on: see Install, \"For the voice\", in "
-                              "the README.")
-        UNIT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        UNIT_PATH.write_text(f"""[Unit]
-Description=Lago Agents: listen for the wake phrase
-After=pipewire.service
-
-[Service]
-ExecStart="{voice.TTS_PYTHON}" "{Path(__file__).resolve()}"
-Environment="PATH={os.environ.get('PATH', '/usr/bin:/bin')}"
-Restart=always
-RestartSec=5
-Nice=5
-
-[Install]
-WantedBy=default.target
-""")
-        _systemctl("daemon-reload")
-        proc = _systemctl("enable", "--now", SERVICE)
-        if proc.returncode != 0:
-            raise ListenError(proc.stderr.strip() or "Couldn't start the listener")
-    else:
-        if UNIT_PATH.exists() or service_running():
-            _systemctl("disable", "--now", SERVICE)
-            UNIT_PATH.unlink(missing_ok=True)
-            _systemctl("daemon-reload")
+    """On: define the service (it follows this checkout) and start it. Off: stop it and remove it."""
+    import desktop
+    try:
+        if on:
+            if not voice.TTS_PYTHON.exists():
+                raise ListenError("Listening needs the speech add-on: see Install, \"For the voice\", in "
+                                  "the README.")
+            desktop.service_write(SERVICE, [str(voice.TTS_PYTHON), str(Path(__file__).resolve())],
+                                  "Lago Agents: listen for the wake phrase", after="pipewire.service")
+            desktop.service_enable(SERVICE)
+        elif desktop.service_path(SERVICE).exists() or service_running():
+            desktop.service_disable(SERVICE, remove=True)
+    except desktop.ServiceError as error:
+        raise ListenError(f"Couldn't {'start' if on else 'stop'} the listener: {error}") from error
 
 
 # ---------------------------------------------------------------- hearing the phrase
