@@ -40,6 +40,17 @@ jobs:
           assert keychain.lookup("ci-check", "ci") is None
           print("Keychain: stored, read back and removed")
           PY
+      - name: Lago's voices install from the app and a persona speaks with Kokoro
+        if: success() || failure()
+        run: |
+          export HOME="$RUNNER_TEMP/voice-home" XDG_STATE_HOME="$RUNNER_TEMP/voice-home/state"
+          mkdir -p "$HOME"
+          python lago/voice_setup.py
+          cat "$XDG_STATE_HOME/lago-agents/voice-setup.json"
+          "$HOME/.local/share/lago-agents/tts/bin/python" lago/speak.py --voice kokoro:am_santa \
+            --out "$RUNNER_TEMP/chip" -- "Hi, I'm Chip."
+          ls -l "$RUNNER_TEMP"/chip.*
+          test -s "$(ls "$RUNNER_TEMP"/chip.* | head -1)"
       - name: The installer makes the app and its background service
         if: success() || failure()
         run: |

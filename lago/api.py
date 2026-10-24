@@ -76,6 +76,7 @@ import tickets
 import transcripts
 import vault
 import voice
+import voice_setup
 
 UI_THREAD = {"show_terminal", "hide_terminal", "clipboard_files"}
 
@@ -1369,7 +1370,7 @@ class Api:
                 "days": [{"day": d["day"], "headlines": d["headlines"]} for d in memory.days(3)],
                 "sessions": sessions, "events": decisions.with_verdicts(hub.events(limit=40)),
                 "runs": _agent_runs(states, running, now),
-                "voice": voice.settings(config), "voices": voice.voices(),
+                "voice": voice.settings(config), "voices": voice.voices(), "voice_setup": voice_setup.status(),
                 "effects": [{"id": k, "label": v} for k, v in voice.EFFECTS.items()],
                 "wake_sounds": [{"id": k, "label": v} for k, v in voice.WAKE_SOUNDS.items()
                                 if not k.startswith("/") or Path(k).is_file()],  # the desktop's own sounds vary
@@ -1719,9 +1720,16 @@ class Api:
         current = {**voice.settings(config), **(settings or {})}
         project = next(iter(config["projects"].values()), {}).get("name", "your project")
         if not voice.say(voice.phrase(config, kind, project), current, voice.KIND_CATEGORY.get(kind, "progress")):
-            raise ApiError("No voice is installed (Piper in ~/.local/share/lago-agents/piper, or "
-                           "speech-dispatcher with espeak-ng).")
+            raise ApiError("No voice is installed: install Lago's voices in his settings.")
         return {"ok": True, "message": "Speaking…"}
+
+    def install_voices(self):
+        """Lago's own voices and the speech engines, downloaded in the background."""
+        voice_setup.start()
+        return {"ok": True, **voice_setup.status()}
+
+    def voice_setup_status(self):
+        return voice_setup.status()
 
     # --- services
 

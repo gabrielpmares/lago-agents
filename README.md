@@ -115,14 +115,15 @@ What's different on a Mac:
 |---|---|
 | Secrets | The Keychain ("Lago Agents" entries) |
 | Background scheduler, phone access, "Hey Lago" | launchd agents in `~/Library/LaunchAgents` (`com.lago-agents.*`), logs in `~/Library/Logs/lago-agents` |
-| Lago's voice | `afplay`; macOS's own voices (`say`) work offline with no setup |
+| Lago's voice | `afplay`; **Install voices** in Lago's settings (or the persona picker) gets his Kokoro voices, and `brew install ffmpeg` their effects. Until then macOS's own voices (`say`) speak |
 | Talking to Lago | `brew install ffmpeg`, plus the speech venv below; macOS asks once for the microphone |
 | Terminal windows | iTerm if it's installed, else Terminal |
 | Agents built from GitHub | Their install scripts run in macOS's own sandbox (`sandbox-exec`) instead of bubblewrap: their folder only, nothing private |
 
 For the voice (optional), install a recorder and player (PipeWire's `pw-record`/`pw-play`,
 or PulseAudio's `parecord`/`paplay`, or ALSA's `arecord`), `ffmpeg` and, as a fallback
-voice, `speech-dispatcher` with `espeak-ng`; then the speech venv:
+voice, `speech-dispatcher` with `espeak-ng`. Then press **Install voices** in Lago's settings,
+which makes the speech venv and downloads the Kokoro voices in the background, or do it by hand:
 
 ```bash
 python3 -m venv ~/.local/share/lago-agents/tts

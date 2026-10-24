@@ -4947,9 +4947,42 @@ function personaCards(selected, onPick) {
     }));
 }
 
+/* Lago's own voices (Kokoro) aren't installed: without them every persona speaks in the
+   system's voice. One button installs them in the background; this follows it to the end. */
+function voiceSetupCallout(setup) {
+  const box = h("div");
+  const draw = (s) => {
+    if (s.installed && s.effects) return fill(box);
+    fill(box, h("div", { class: "callout" }, icon(s.error ? "warning-circle" : "speaker-high"),
+      h("div", {},
+        !s.installed ? h("p", {}, h("b", {}, "Lago's voices aren't installed. "),
+          s.running ? `${s.step}…` : "Without them every persona speaks in this computer's own voice, and talking to him doesn't work. They download once (about 400 MB) and then work offline.") : null,
+        s.error ? h("p", {}, s.error) : null,
+        !s.effects ? h("p", {}, "The voice effects (each persona's robot or creature sound) need ffmpeg: ",
+          h("span", { class: "mono" }, s.ffmpeg_install), ".") : null,
+        !s.installed && !s.running ? h("button", { type: "button", class: "btn small primary", onclick: (e) => runAction(e.currentTarget, async () => {
+          draw(await bridge.call("install_voices"));
+          follow();
+        }) }, icon("download-simple"), s.error ? "Try again" : "Install voices") : null)));
+  };
+  const follow = () => setTimeout(async () => {
+    if (!box.isConnected) return;
+    const s = await bridge.call("voice_setup_status").catch(() => null);
+    if (!s) return;
+    draw(s);
+    if (s.running) follow();
+    else if (s.installed) toast("Lago's voices are installed.");
+  }, 2000);
+  draw(setup);
+  if (setup.running) follow();
+  return box;
+}
+
 function personaDialog() {
   return openDialog((close) => {
     let picked = state.persona;
+    const setupSlot = h("div");
+    bridge.call("voice_setup_status").then((s) => fill(setupSlot, voiceSetupCallout(s))).catch(() => {});
     const slot = h("div");
     const draw = () => fill(slot, personaCards(picked, (id) => { picked = id; draw(); }));
     draw();
@@ -4960,6 +4993,7 @@ function personaDialog() {
       } },
       h("h2", {}, "Who do you want to talk to?"),
       h("p", { class: "desc" }, "Same assistant, same memory and work: only his name, face and voice change. His voice and effect switch with him; you can still change them in his settings."),
+      setupSlot,
       slot,
       h("div", { class: "dialog-actions" },
         h("button", { type: "button", class: "btn ghost", onclick: () => close(false) }, "Cancel"),
@@ -5564,6 +5598,7 @@ views.orchestrator = (root, alive) => {
           onclick: (e) => { skip = !skip; e.currentTarget.setAttribute("aria-checked", String(skip)); } }),
           "Skip permissions: ask for my password when Lago wakes"),
         voiceOn ? [h("h3", { class: "section-title" }, "Voice"),
+        data.voice_setup ? voiceSetupCallout(data.voice_setup) : null,
         switchRow("Say a short version of each reply aloud", v.talk, (on) => { v.talk = on; }),
         switchRow("Greet me when Lago Agents opens", v.greet, (on) => { v.greet = on; }),
         switchRow("Speak reports from tasks", v.enabled, (on) => { v.enabled = on; }),
