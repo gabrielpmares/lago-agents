@@ -88,6 +88,8 @@ def tables(encrypted=None):
         "activity_log": [{"id": "al1", "company_id": CO, "actor_type": "user", "actor_id": "local-board", "action": "goal.created", "entity_type": "goal",
                           "details": json.dumps({"title": "Reach $10k MRR"}), "created_at": t},
                          {"id": "al2", "company_id": CO, "actor_type": "system", "action": "heartbeat.started", "entity_type": "agent", "created_at": t}],
+        "assets": [{"id": "as1", "company_id": CO, "object_key": f"{CO}/issues/crash.log", "original_filename": "crash.log"}],
+        "issue_attachments": [{"id": "at1", "company_id": CO, "issue_id": I["ui"], "asset_id": "as1"}],
         "plugins": [{"id": "pl1", "company_id": CO, "name": "linear-sync"}],
         "heartbeat_runs": [{"id": "hr1", "company_id": CO, "agent_id": A["ceo"], "status": "succeeded"}],
     }
@@ -168,6 +170,9 @@ def make_instance(home, form="insert"):
     skill.mkdir(parents=True, exist_ok=True)
     (skill / "SKILL.md").write_text("---\nname: release-notes\ndescription: Write release notes from merged PRs.\n---\n\n# Release notes\n\nGroup merged PRs.\n")
     (skill / "template.md").write_text("## Added\n")
+    storage = root / "data" / "storage" / CO / "issues"
+    storage.mkdir(parents=True, exist_ok=True)
+    (storage / "crash.log").write_text("conflict at 10:42\n")
     (root / "secrets").mkdir(parents=True, exist_ok=True)
     (root / "secrets" / "master.key").write_text(base64.b64encode(KEY).decode())
     backups = root / "data" / "backups"

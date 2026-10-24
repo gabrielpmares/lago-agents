@@ -178,6 +178,9 @@ class LocalTests(Base):
         self.assertEqual([r["number"] for r in items["NOR-2"]["documents"][0]["revisions"]], [1, 2])
         self.assertEqual((items["NOR-4"]["status"], items["NOR-4"]["open"]), ("done", False))
         self.assertEqual(items["NOR-1"]["goal_id"], g2["id"])
+        attachment = items["NOR-3"]["body"].split("- ")[-1].strip()
+        self.assertTrue(attachment.endswith("NOR-3/crash.log"))
+        self.assertEqual(open(os.path.expanduser(attachment)).read(), "conflict at 10:42\n")
 
         if fx.encrypt("x"):
             self.assertEqual(support.KEYRING.lookup("stripe-api-key", ""), "sk_test_123")
