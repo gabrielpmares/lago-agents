@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Lago Agents mark: Lago the otter. Same drawing as OTTER_SVG in ui/app.js. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="1.55" android:scaleY="1.55" android:translateX="16.80" android:translateY="12.15">
+        <path android:fillColor="#FF4FB89E" android:pathData="M5,20a3.6,3.6 0,1 1,7.2,0a3.6,3.6 0,1 1,-7.2,0ZM35.8,20a3.6,3.6 0,1 1,7.2,0a3.6,3.6 0,1 1,-7.2,0Z" />
+        <path android:fillColor="#590C1915" android:pathData="M7.1,20a1.5,1.5 0,1 1,3,0a1.5,1.5 0,1 1,-3,0ZM37.9,20a1.5,1.5 0,1 1,3,0a1.5,1.5 0,1 1,-3,0Z" />
+        <path android:fillColor="#FF4FB89E" android:pathData="M24,13c10.5,0 18,6 18,14.5S34.5,41 24,41 6,36 6,27.5 13.5,13 24,13z" />
+        <path android:fillColor="#FFCEF0E4" android:pathData="M10,31.5c2.5,-4 8,-5.5 14,-5.5s11.5,1.5 14,5.5c-2,5.5 -7.5,8 -14,8s-12,-2.5 -14,-8zM14.2,31.6a5.4,5.4 0,1 1,10.8,0a5.4,5.4 0,1 1,-10.8,0ZM23,31.6a5.4,5.4 0,1 1,10.8,0a5.4,5.4 0,1 1,-10.8,0Z" />
+        <path android:strokeColor="#590C1915" android:strokeWidth="1" android:strokeLineCap="round" android:pathData="M14.5,31.4 L7,30M14.8,33.6 L7.5,35M33.5,31.4 L41,30M33.2,33.6 L40.5,35" />
+        <path android:fillColor="#FF0C1915" android:pathData="M13.9,22.6a2.5,2.5 0,1 1,5,0a2.5,2.5 0,1 1,-5,0ZM29.1,22.6a2.5,2.5 0,1 1,5,0a2.5,2.5 0,1 1,-5,0Z" />
+        <path android:fillColor="#D9FFFFFF" android:pathData="M16.5,21.8a0.7,0.7 0,1 1,1.4,0a0.7,0.7 0,1 1,-1.4,0ZM31.7,21.8a0.7,0.7 0,1 1,1.4,0a0.7,0.7 0,1 1,-1.4,0Z" />
+        <path android:fillColor="#FF0C1915" android:pathData="M20.6,26.4c0,-1 1.5,-1.6 3.4,-1.6s3.4,0.6 3.4,1.6c0,1.4 -2,2.8 -3.4,2.8s-3.4,-1.4 -3.4,-2.8z" />
+        <path android:strokeColor="#FF0C1915" android:strokeWidth="1.3" android:strokeLineCap="round" android:pathData="M24,29.2v2M21,33q1.5,1.2 3,-0.4 1.5,1.6 3,0.4" />
+    </group>
+</vector>

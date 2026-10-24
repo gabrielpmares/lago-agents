@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- No plain HTTP anywhere. The connection to your computer doesn't use the system's
+     certificate authorities at all: it's pinned to your computer's own certificate
+     (net/PinnedTrust.kt). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

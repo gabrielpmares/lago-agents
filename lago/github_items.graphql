@@ -1,0 +1,10 @@
+query($ids:[ID!]!){ nodes(ids:$ids){ ... on ProjectV2Item { id updatedAt
+  fieldValues(first:30){ nodes{ __typename
+    ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
+    ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } }
+    ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } }
+    ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } }
+  content { __typename
+    ... on Issue { title number url body updatedAt repository { nameWithOwner } assignees(first:10){nodes{login}} labels(first:20){nodes{name}} }
+    ... on PullRequest { title number url body updatedAt repository { nameWithOwner } assignees(first:10){nodes{login}} labels(first:20){nodes{name}} }
+    ... on DraftIssue { title body updatedAt assignees(first:10){nodes{login}} } } } } }

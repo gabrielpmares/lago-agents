@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lago the otter in one colour, for the status bar. Same drawing as OTTER_SVG in ui/app.js. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <group android:scaleX="0.55" android:scaleY="0.55" android:translateX="-1.20" android:translateY="-2.85">
+        <path android:fillColor="#FFFFFFFF" android:pathData="M5,20a3.6,3.6 0,1 1,7.2,0a3.6,3.6 0,1 1,-7.2,0ZM35.8,20a3.6,3.6 0,1 1,7.2,0a3.6,3.6 0,1 1,-7.2,0Z" />
+        <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M24,13c10.5,0 18,6 18,14.5S34.5,41 24,41 6,36 6,27.5 13.5,13 24,13zM13.9,22.6a2.5,2.5 0,1 1,5,0a2.5,2.5 0,1 1,-5,0ZM29.1,22.6a2.5,2.5 0,1 1,5,0a2.5,2.5 0,1 1,-5,0ZM20.6,26.4c0,-1 1.5,-1.6 3.4,-1.6s3.4,0.6 3.4,1.6c0,1.4 -2,2.8 -3.4,2.8s-3.4,-1.4 -3.4,-2.8z" />
+    </group>
+</vector>

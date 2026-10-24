@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0f1012">
+  <title>Lago Agents</title>
+  <link rel="icon" href="lago-agents-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="vendor/phosphor/regular.css">
+  <link rel="stylesheet" href="vendor/phosphor/fill.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="shell">
+    <nav class="sidebar" aria-label="Sections">
+      <div class="brand" translate="no"><img src="lago-agents-icon.svg" alt="" width="26" height="26">Lago Agents
+        <div class="bell-wrap">
+          <button class="bell" id="bell" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="notifications" title="What needs you">
+            <i class="ph ph-bell" aria-hidden="true"></i><span class="bell-count" id="bell-count" hidden></span>
+          </button>
+          <section class="notifications" id="notifications" role="dialog" aria-label="What needs you" hidden></section>
+        </div>
+      </div>
+      <ul class="nav" role="list">
+        <li class="nav-lago nav-admin"><a href="#orchestrator" data-view="orchestrator" id="lago-link" class="lago-link">
+          <span class="orb mini" aria-hidden="true" data-state="off"></span>
+          <span class="lago-link-text"><strong>Talk to Lago</strong><small id="lago-mood">Asleep</small></span>
+          <span class="nav-count" id="reports-count" hidden></span></a></li>
+        <li class="nav-new nav-operate"><button type="button" id="new-task" class="new-task-btn" title="Ask for anything (Ctrl+N)"><i class="ph ph-plus-circle" aria-hidden="true"></i>New Task<kbd>Ctrl N</kbd></button></li>
+        <li class="nav-label" aria-hidden="true">Work</li>
+        <li><a href="#map" data-view="map"><i class="ph ph-graph" aria-hidden="true"></i>Live Map</a></li>
+        <li><a href="#overview" data-view="overview"><i class="ph ph-squares-four" aria-hidden="true"></i>Dashboard<span class="nav-count" id="attention-count" hidden></span></a></li>
+        <li><a href="#tasks" data-view="tasks"><i class="ph ph-list-checks" aria-hidden="true"></i>Tasks</a></li>
+        <li><a href="#routines" data-view="routines"><i class="ph ph-repeat" aria-hidden="true"></i>Routines</a></li>
+        <li><a href="#projects" data-view="projects"><i class="ph ph-folders" aria-hidden="true"></i>Projects<span class="nav-count" id="pipelines-count" hidden></span></a></li>
+        <li><a href="#history" data-view="history"><i class="ph ph-clock-counter-clockwise" aria-hidden="true"></i>History</a></li>
+        <li class="nav-label" aria-hidden="true">Organization</li>
+        <li><a href="#swarm" data-view="swarm"><i class="ph ph-users-three" aria-hidden="true"></i>Agents</a></li>
+        <li class="nav-admin"><a href="#people" data-view="people"><i class="ph ph-identification-badge" aria-hidden="true"></i>People</a></li>
+        <li class="nav-admin"><a href="#connectors" data-view="connectors"><i class="ph ph-plugs-connected" aria-hidden="true"></i>Connectors</a></li>
+        <li class="nav-admin"><a href="#permissions" data-view="permissions"><i class="ph ph-shield-check" aria-hidden="true"></i>Permissions</a></li>
+        <li class="nav-admin"><a href="#accounts" data-view="accounts"><i class="ph ph-user-switch" aria-hidden="true"></i>Accounts &amp; Budgets</a></li>
+        <li class="nav-phone nav-admin"><a href="#phone" data-view="phone"><i class="ph ph-device-mobile" aria-hidden="true"></i>Phone</a></li>
+      </ul>
+      <a class="account-chip" id="account-chip" href="#accounts" title="Account new sessions start on" hidden></a>
+      <div class="sidebar-foot">
+        <button type="button" class="btn small ghost features-link" id="features-link" title="Switch extras on and off"><i class="ph ph-puzzle-piece" aria-hidden="true"></i>Features</button>
+        <div class="appearance" id="appearance" role="group" aria-label="Appearance">
+          <button type="button" data-appearance="auto" aria-pressed="false" aria-label="Auto: follow the desktop" title="Auto: follow the desktop"><i class="ph ph-monitor" aria-hidden="true"></i></button>
+          <button type="button" data-appearance="light" aria-pressed="false" aria-label="Light" title="Light"><i class="ph ph-sun" aria-hidden="true"></i></button>
+          <button type="button" data-appearance="dark" aria-pressed="false" aria-label="Dark" title="Dark"><i class="ph ph-moon" aria-hidden="true"></i></button>
+        </div>
+        <p class="sidebar-hint"><kbd>Ctrl</kbd>&nbsp;<kbd>1</kbd>-<kbd>8</kbd> to switch</p>
+      </div>
+    </nav>
+    <div class="content">
+      <header class="topbar">
+        <nav class="session-tabs" id="session-tabs" aria-label="Open work sessions"></nav>
+      </header>
+      <main id="main" class="main" tabindex="-1"></main>
+    </div>
+  </div>
+  <div class="toasts" role="status" aria-live="polite"></div>
+  <dialog id="dialog" class="dialog"></dialog>
+  <script src="vendor/qrcode/qrcode.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

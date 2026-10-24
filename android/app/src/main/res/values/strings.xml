@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lago Agents</string>
+    <string name="channel_attention">Needs you</string>
+    <string name="channel_attention_desc">An agent asks permission, has a question, finished, or crashed.</string>
+    <string name="channel_live">Live connection</string>
+    <string name="channel_live_desc">Shown while instant alerts keep a connection to your computer.</string>
+    <string name="channel_updates">App updates</string>
+    <string name="channel_updates_desc">A new version of the app from your computer.</string>
+</resources>

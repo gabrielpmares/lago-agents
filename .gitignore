@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+bench/results/
+graphify-out/
+# Backups the REA installer leaves next to skills it updates
+*.rea.backup
+# Your own setup never goes in the app's repository: config, agents and skills live in
+# ~/.config/lago-agents (config_store.DATA_DIR); these are your local Claude Code notes.
+/config.json
+CLAUDE.local.md
+.claude/settings.local.json

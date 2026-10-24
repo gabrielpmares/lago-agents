@@ -1,0 +1,3 @@
+#!/bin/sh
+# Start Lago Agents (the app's code is in lago/).
+exec python3 "$(dirname "$(readlink -f "$0")")/lago/lago_agents.py" "$@"

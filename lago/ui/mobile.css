@@ -1,0 +1,130 @@
+/*
+  Lago Agents on the phone. remote.py adds this sheet (and class="remote" on <html>)
+  only for the Android app, which shows these same pages from your computer.
+  The sidebar becomes a bottom tab bar, touch targets grow to 40px or more, hover-only
+  controls stay visible, and Lago's conversation fills the screen above its composer.
+*/
+
+:root { --tabbar: 62px; --topbar: 48px; }
+/* The phone's bridge keeps --app-h at the WebView's real height: inside an app, 100dvh can be
+   computed while the view is still zero pixels tall and never update. */
+.remote, .remote body { height: var(--app-h, 100%); }
+
+/* What only makes sense at the desk. */
+.remote .nav-phone, .remote .sidebar-foot, .remote .talk-keys, .remote .brand,
+.remote .account-chip, .remote .lago-link-text small, .remote .skip-link { display: none !important; }
+
+/* ---------------------------------------------------------------- shell */
+
+.remote .shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; height: var(--app-h, 100%); }
+.remote .content { height: auto; min-height: 0; grid-row: 1; }
+.remote .sidebar {
+  grid-row: 2; min-width: 0; flex-direction: row; align-items: stretch; gap: 0;
+  padding: 0 4px; border-right: 0; border-top: 1px solid var(--border);
+  height: var(--tabbar); background: var(--surface);
+}
+.remote .nav {
+  display: flex; flex-wrap: nowrap; gap: 0; flex: 1; min-width: 0; margin: 0; padding: 0; overflow-y: hidden;
+  overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity;
+}
+.remote .nav::-webkit-scrollbar { display: none; }
+.remote .nav li { flex: 1 0 64px; scroll-snap-align: start; }
+.remote .nav a {
+  position: relative; height: 100%; flex-direction: column; justify-content: center; gap: 3px;
+  padding: 6px 2px; border-radius: 0; font-size: 11px; font-weight: 550; letter-spacing: 0.01em;
+  white-space: nowrap; text-align: center;
+}
+.remote .nav a .ph { font-size: 22px; }
+.remote .nav a:hover { background: transparent; }
+.remote .nav a[aria-current="page"] { background: transparent; color: var(--accent); }
+.remote .nav a[aria-current="page"]::before {
+  content: ""; position: absolute; top: 0; left: 22%; right: 22%; height: 2px; border-radius: 0 0 2px 2px; background: var(--accent);
+}
+.remote .nav-lago { margin: 0; }
+.remote .nav a.lago-link, .remote .nav a.lago-link[aria-current="page"] { background: transparent; box-shadow: none; }
+.remote .lago-link-text { display: block; }
+.remote .lago-link-text strong { font-size: 0; }
+.remote .lago-link-text strong::after { content: "Lago"; font-size: 11px; }
+.remote .orb.mini { --orb: 22px; }
+.remote .nav-count { position: absolute; top: 5px; left: calc(50% + 6px); margin: 0; min-width: 17px; height: 17px; font-size: 10.5px; }
+
+/* The top bar: open sessions scroll sideways, the bell stays put. */
+.remote .topbar { min-height: var(--topbar); padding: 4px 8px 0 12px; }
+.remote .session-tab { max-width: 180px; height: 38px; }
+.remote .bell { width: 44px; height: 44px; }
+.remote .notifications { position: fixed; left: 8px; right: 8px; top: calc(var(--topbar) + 4px); width: auto; max-height: calc(var(--app-h, 100dvh) - var(--topbar) - var(--tabbar) - 20px); }
+.remote .note-dismiss { opacity: 1; width: 34px; height: 34px; }
+.remote .note-main { padding-right: 46px; }
+
+.remote .view { padding: 18px 14px 40px; }
+.remote .page-head { margin-bottom: 18px; gap: 10px; }
+.remote .page-head h1 { font-size: 21px; }
+.remote .page-head p { font-size: 13.5px; }
+
+/* ---------------------------------------------------------------- touch */
+
+.remote .btn { height: 40px; }
+.remote .btn.small { height: 36px; padding: 0 12px; }
+.remote .btn.icon { width: 40px; }
+.remote .btn.icon.small { width: 36px; }
+.remote .input, .remote .select { height: 44px; font-size: 16px; } /* 16px stops the zoom-on-focus */
+.remote textarea.input { font-size: 16px; }
+.remote .switch { width: 44px; height: 26px; }
+.remote .switch::after { width: 20px; height: 20px; }
+.remote .switch[aria-checked="true"]::after { transform: translateX(18px); }
+.remote .segmented { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.remote .segmented button { height: 36px; white-space: nowrap; }
+.remote .menu button { padding: 12px 12px; }
+
+/* Rows: actions drop under the text instead of squeezing it. */
+.remote .row { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.remote .row-actions { flex-wrap: wrap; }
+.remote .row-actions.cols, .remote .row-actions.cols.no-switch { display: flex; justify-items: start; }
+.remote .row:has(> .svc-dot) { grid-template-columns: auto minmax(0, 1fr); }
+.remote .inline-row, .remote .inline-row:has(.narrow) { grid-template-columns: 1fr; }
+.remote .controls-line { flex-wrap: wrap; }
+.remote .search { max-width: none; flex-basis: 100%; }
+.remote .io, .remote .io:not(:has(.badge)), .remote .manifest-prose, .remote .inputs { grid-template-columns: 1fr; gap: 2px; }
+.remote pre, .remote .mono { overflow-wrap: anywhere; }
+.remote pre { max-width: 100%; overflow-x: auto; }
+
+/* Dialogs: a sheet from the bottom, scrolling when tall. */
+.remote .dialog, .remote .dialog.wide {
+  width: 100vw; max-width: 100vw; max-height: calc(var(--app-h, 100dvh) * 0.92); margin: auto 0 0; overflow-y: auto;
+  border-radius: 18px 18px 0 0; border-bottom: 0;
+}
+.remote .dialog[open] { animation: sheet-in 220ms var(--ease) both; }
+@keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
+.remote .dialog form { padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); }
+.remote .dialog-actions { flex-wrap: wrap-reverse; }
+.remote .dialog-actions .btn { flex: 1 1 140px; }
+
+.remote .toasts { left: 12px; right: 12px; bottom: calc(var(--tabbar) + 12px); justify-items: stretch; }
+
+/* ---------------------------------------------------------------- Talk to Lago */
+
+.remote .view.lago-view { height: auto; padding: 8px 10px 0; }
+.remote .lago-layout { grid-template-columns: 1fr; gap: 0; height: auto; }
+.remote .lago-main { height: calc(var(--app-h, 100dvh) - var(--topbar) - var(--tabbar) - 10px); }
+.remote .lago-hero { gap: 12px; padding: 4px 2px 8px; flex-wrap: nowrap; }
+.remote .orb.big { --orb: 44px; }
+.remote .lago-title h1 { font-size: 19px; }
+.remote .lago-mood { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.remote .lago-title { flex: 1; }
+.remote .lago-tools { flex-wrap: nowrap; overflow-x: auto; max-width: 52%; scrollbar-width: none; }
+.remote .chat { min-height: 0; max-height: none; padding: 12px 2px; }
+.remote .msg { max-width: 92%; }
+.remote .lago-composer { column-gap: 10px; padding: 8px 0 10px; }
+.remote .mic-big { width: 50px; height: 50px; font-size: 22px; }
+.remote .lago-input { padding: 4px 4px 4px 12px; }
+.remote .lago-composer-foot { font-size: 12px; }
+.remote .lago-side { padding: 12px 2px 32px; border-left: 0; border-top: 1px solid var(--border); }
+.remote .msg-image img { max-width: 160px; max-height: 140px; }
+
+/* ---------------------------------------------------------------- grids */
+
+.remote .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.remote .catalog-grid, .remote .project-grid, .remote .team-form, .remote .team-form.wide { grid-template-columns: 1fr; }
+.remote .area-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.remote .account-body { grid-template-columns: 1fr; }
+.remote .score-head, .remote .prompt-compare { grid-template-columns: 1fr; }

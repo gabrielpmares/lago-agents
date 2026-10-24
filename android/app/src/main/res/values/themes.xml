@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose draws everything; this only colours the window before the first frame. -->
+    <style name="Theme.Lago" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/lago_bg</item>
+        <item name="android:colorAccent">@color/lago_accent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
