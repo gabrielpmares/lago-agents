@@ -1,8 +1,22 @@
 #!/bin/sh
 # Start Lago Agents (the app's code is in lago/). On macOS it opens in its own window
 # (pywebview, from the app's venv when install.sh made one) or a browser app window.
-HERE=$(python3 -c 'import os, sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")
-PYTHON=python3
+# It needs Python 3.11 or newer: macOS's own /usr/bin/python3 is older, so Homebrew's is
+# looked for even when Homebrew isn't on this PATH.
 VENV="${XDG_STATE_HOME:-$HOME/.local/state}/lago-agents/app-venv/bin/python"
-[ -x "$VENV" ] && PYTHON="$VENV"
+PYTHON=
+for candidate in "$VENV" python3.14 python3.13 python3.12 python3.11 \
+        /opt/homebrew/bin/python3 /usr/local/bin/python3 python3; do
+    if "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+        PYTHON="$candidate"
+        break
+    fi
+done
+if [ -z "$PYTHON" ]; then
+    message="Lago Agents needs Python 3.11 or newer. Install it with: brew install python"
+    echo "$message" >&2
+    [ "$(uname -s)" = Darwin ] && osascript -e "display alert \"Lago Agents\" message \"$message\"" >/dev/null 2>&1
+    exit 1
+fi
+HERE=$("$PYTHON" -c 'import os, sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$0")
 exec "$PYTHON" "$HERE/lago/lago_agents.py" "$@"

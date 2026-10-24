@@ -13,6 +13,14 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lago-agents"
 MENU_FILE="$HOME/.local/share/applications/lago-agents.desktop"
 ICON_FILE="$HOME/.local/share/icons/hicolor/scalable/apps/lago-agents.svg"
 MAC_APP="$HOME/Applications/Lago Agents.app"
+if [[ "$OS" == Darwin ]]; then
+    # Homebrew's tools first, even in a shell Homebrew's "Next steps" never set up: macOS's own
+    # python3 is too old.
+    for brew_bin in /usr/local/bin /opt/homebrew/bin; do
+        [[ -d "$brew_bin" ]] && PATH="$brew_bin:$PATH"
+    done
+    export PATH
+fi
 
 if [[ "${1:-}" == "--uninstall" ]]; then
     rm -f "$MENU_FILE" "$ICON_FILE"
