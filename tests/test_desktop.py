@@ -113,6 +113,7 @@ class MacSandboxTests(unittest.TestCase):
         self.assertIn(f'(allow file-write* (subpath "{self.folder.resolve()}")', profile)
         self.assertIn(f'(deny file-read* (subpath "{desktop.Path.home().resolve() / ".ssh"}"))', profile)
         self.assertIn(f"HOME={self.folder.resolve()}", argv)
+        self.assertIn(str(self.folder.resolve()), argv[3:8])  # it starts in its folder
         self.assertIn(f"TOOL_DIR={self.folder}", argv)
         self.assertEqual(argv[-2:], ["bash", "x.sh"])
 

@@ -56,8 +56,9 @@ jobs:
         if: success() || failure()
         run: |
           python lago/app_server.py --no-window > "$RUNNER_TEMP/url.txt" 2> "$RUNNER_TEMP/server.log" &
-          for i in $(seq 1 30); do [ -s "$RUNNER_TEMP/url.txt" ] && break; sleep 1; done
+          for i in $(seq 1 60); do [ -s "$RUNNER_TEMP/url.txt" ] && break; sleep 1; done
           URL=$(head -1 "$RUNNER_TEMP/url.txt")
+          if [ -z "$URL" ]; then echo "The server didn't start:"; cat "$RUNNER_TEMP/server.log"; exit 1; fi
           curl -sf -c "$RUNNER_TEMP/jar" -b "$RUNNER_TEMP/jar" -L "$URL" | grep -q "web-bridge.js"
           curl -sf -b "$RUNNER_TEMP/jar" -X POST -H "X-Lago-Web: 1" -H "Content-Type: application/json" \
             -d '{"method":"init","params":{}}' "${URL%%/\?*}/v1/call" | python -c "import json,sys; d=json.load(sys.stdin); assert d['ok'] and d['data']['page_terminal'], d; print('init answered')"

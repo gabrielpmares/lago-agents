@@ -174,7 +174,9 @@ def _seatbelt_argv(argv, folder, env=None):
     path = os.pathsep.join(dict.fromkeys([p for p in os.environ.get("PATH", "").split(os.pathsep)
                                           if p and not any(p.startswith(str(x)) for x in private)] + ["/usr/bin", "/bin"]))
     variables = {"PATH": path, "HOME": str(folder), "LANG": os.environ.get("LANG", "en_US.UTF-8"), **{k: str(v) for k, v in (env or {}).items()}}
-    return ["sandbox-exec", "-p", profile, "env", "-i", *[f"{k}={v}" for k, v in variables.items()], *argv]
+    # It starts in its folder, as bubblewrap's --chdir does.
+    return ["sandbox-exec", "-p", profile, "/bin/sh", "-c", 'cd "$1" && shift && exec "$@"', "sh", str(folder),
+            "/usr/bin/env", "-i", *[f"{k}={v}" for k, v in variables.items()], *argv]
 
 
 # ---------------------------------------------------------------- opening things

@@ -64,7 +64,7 @@ class SandboxTests(unittest.TestCase):
         from pathlib import Path
         home = Path.home()
         path = f"{home}/.claude/scripts:{home}/.local/bin:/usr/bin:/snap/bin"
-        with mock.patch.dict("os.environ", {"PATH": path, "GITHUB_TOKEN": "secret"}), \
+        with mock.patch.dict("os.environ", {"PATH": path, "GITHUB_TOKEN": "secret"}), mock.patch.object(desktop, "IS_MAC", False), \
                 mock.patch.object(desktop.shutil, "which", return_value="/usr/bin/bwrap"), \
                 mock.patch.object(desktop.Path, "is_dir", lambda self: True):
             argv = desktop.sandbox_argv(["bash", "x.sh"], self.folder, {"TOOL_DIR": self.folder})
