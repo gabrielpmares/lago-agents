@@ -1818,3 +1818,32 @@ a.mini-avatar:focus-visible { box-shadow: var(--focus); outline: none; }
 .import-left { margin: 4px 0 0; padding-left: 20px; display: grid; gap: 4px; font-size: 13px; color: var(--text-2); }
 .imported-body { margin: 6px 0 0; font-size: 12.5px; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-width: 700px) { .import-line { grid-template-columns: 1fr; } }
+.import-instance { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border-radius: var(--r-control); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.import-instance .import-text { flex: 1; min-width: 220px; }
+.import-instance .toolbar { margin: 0; }
+.import-other summary { font-size: 13px; }
+.import-other .import-sources { margin-top: 10px; }
+.import-item.static { grid-template-columns: minmax(0, 1fr); cursor: default; }
+.import-choices { display: flex; gap: 6px 16px; flex-wrap: wrap; margin-bottom: 2px; }
+.import-choice { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; cursor: pointer; }
+.import-choice input { accent-color: var(--accent); }
+.import-companies { align-self: start; }
+.import-companies button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.import-ask { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border-radius: var(--r-control); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); font-size: 13.5px; }
+.import-ask > .ph { color: var(--accent); font-size: 18px; }
+.import-ask span { flex: 1; min-width: 200px; }
+
+.backlog { display: grid; gap: 8px; margin-bottom: 22px; }
+.backlog-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.backlog-row { display: flex; align-items: center; gap: 8px; padding-left: calc(var(--depth, 0) * 22px); }
+.backlog-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 0; border-radius: var(--r-control); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.backlog-main:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.backlog-row.closed .backlog-title { color: var(--text-2); }
+.backlog-title { font-size: 13.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.backlog-meta { font-size: 12px; }
+.backlog-labels { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.backlog-dialog { display: grid; gap: 12px; padding: 22px; max-height: min(80vh, 760px); overflow: auto; }
+.backlog-dialog h2 { margin: 0; }
+.backlog-dialog h3 { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 13.5px; }
+.backlog-doc { margin: 0; padding: 10px 12px; border-radius: var(--r-control); background: var(--surface-2); white-space: pre-wrap; font-size: 12.5px; max-height: 260px; overflow: auto; }
+@media (max-width: 700px) { .backlog-row { padding-left: calc(var(--depth, 0) * 12px); } }

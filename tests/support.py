@@ -53,6 +53,27 @@ listen.set_service = lambda on: None  # never installs or starts the real wake-p
 import portability  # noqa: E402
 import skill_sources  # noqa: E402
 
+# Nor store anything in your real keyring: secrets go to a dict for the tests' run.
+import vault  # noqa: E402
+
+
+class MemoryKeyring:
+    def __init__(self):
+        self.values = {}
+
+    def store(self, name, project, value):
+        self.values[(name, project or "")] = value
+
+    def lookup(self, name, project):
+        return self.values.get((name, project or ""))
+
+    def clear(self, name, project):
+        self.values.pop((name, project or ""), None)
+
+
+KEYRING = MemoryKeyring()
+vault._backend = KEYRING
+
 CLAUDE_HOME = TMP / "claude-home"
 skill_sources.LINK_DIR = portability.SKILLS_LINK_DIR = CLAUDE_HOME / "skills"
 portability.AGENTS_LINK_DIR = CLAUDE_HOME / "agents"
@@ -78,5 +99,8 @@ def reset():
     live._ready = False  # its table goes with the old hub.db
     shutil.rmtree(config_store.STATE_DIR / "agent-drafts", ignore_errors=True)
     shutil.rmtree(CLAUDE_HOME, ignore_errors=True)
+    KEYRING.values.clear()
+    vault._backend = KEYRING
     shutil.rmtree(config_store.DATA_DIR / "claude-skills", ignore_errors=True)
+    shutil.rmtree(config_store.DATA_DIR / "catalog" / "agents", ignore_errors=True)  # no agent left over from another test
     config_store.CONFIG_PATH.write_text(json.dumps(BASE_CONFIG))

@@ -452,22 +452,34 @@ the right. His terminal shows on request (the terminal button).
 
 ## Coming from Paperclip
 
-**Agents → Import** brings over what you built in [Paperclip](https://github.com/paperclipai/paperclip)
-(`paperclip_import.py`). Export your company there (company settings → **Export**, with agents,
-skills, projects and tasks), then choose the zip here. A folder from
-`paperclipai company export` or a GitHub repository holding a package works too. You see
-everything the package holds before anything is imported, and tick what you want:
+**Agents → Import** brings over everything you built in [Paperclip](https://github.com/paperclipai/paperclip)
+and everything it did. Lago finds Paperclip on this computer (`~/.paperclip`, or the data folder
+of a Docker install) and reads its own database backup and the files beside it; Paperclip isn't
+changed (`paperclip_local.py`, `paperclip_backup.py`). **Fresh Backup** asks Paperclip for one
+first, so today's last changes come too. A backup file copied from another computer, the zip
+from Paperclip's Export page, an exported folder or a GitHub package work as well.
 
-- **Agents** join the catalog with their instructions, model, and Claude or Codex.
-- **Skills** install like skills from GitHub. Paperclip's own API skills are left out.
-- **Projects** get a folder here, cloned from the project's repository if it isn't there yet.
-- **Routines** (recurring tasks) become routines, switched off until you turn them on. Schedules
-  Lago can't repeat on (monthly, webhooks) come in without one, for you to set.
-- **Open tasks** wait on the Tasks page under *Waiting from Paperclip*; **Start** opens New Task
-  with their text, project and agent filled in.
+You see each company before anything is imported, tick what you want, and can come back for
+more: only what's new comes over (`paperclip_import.py`).
 
-Instructions that try to steer an agent are refused item by item, and the preview lists what
-doesn't carry over: who reports to whom, per-agent monthly budgets, heartbeats and secrets.
+| In Paperclip | In Lago |
+|---|---|
+| Agents: instructions (and SOUL.md, TOOLS.md), model, Claude or Codex, who they report to | Catalog agents |
+| Heartbeats (an agent waking every N minutes) | A routine per agent with its heartbeat checklist, switched off |
+| Skills you made or imported (Paperclip's own stay behind) | Skills, checked like GitHub skills |
+| Goals and sub-goals | Goals |
+| Projects and their workspace | Projects, in the folder Paperclip used, or cloned from its repository |
+| Routines (schedules, webhooks) | Routines, switched off; a webhook gets a new Lago link |
+| Tasks: the whole tree, comments, documents and their revisions, labels, blockers, attachments | The **backlog** on the Tasks page: open ones to start (with what they knew), finished ones as history |
+| Secrets | The keyring: values too when you say so (decrypted with Paperclip's local key), else you're asked for each |
+| Costs | Spending, never counted against your budgets |
+| Approvals and the activity log | History, with their original dates |
+| Documents that belong to no task | Files in `~/.config/lago-agents/imports/paperclip/` |
+
+The preview lists what has no place in Lago (monthly budgets, plugins, chat channels, case
+workflows…). After the import, **Ask Lago to Look** has Lago study those and your Paperclip
+folder and set up the closest thing here. Instructions that try to steer an agent are refused
+item by item.
 
 ## Your phone
 

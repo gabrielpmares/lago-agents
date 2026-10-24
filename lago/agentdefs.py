@@ -199,6 +199,7 @@ def manifest(path):
         "runtime": meta.get("runtime", ""),  # codex runs it on the Codex CLI (codex_runtime.py)
         "codex_model": meta.get("codex_model", ""),
         "source": meta.get("source", ""),
+        "reports_to": meta.get("reports_to", ""),  # who it answered to where it came from (an imported org chart)
         "body": body,
         "path": str(path),
     }
@@ -225,7 +226,8 @@ AGENT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 
 def write_agent(agent_id, name, summary, prompt="", domain="general", extends="", inputs=None,
                 outputs=None, requires="", use_when="", avoid_when="", tags=None, tools="",
-                model="", replace=False, folder=None, mcp="", source="", skills="", runtime="", codex_model=""):
+                model="", replace=False, folder=None, mcp="", source="", skills="", runtime="", codex_model="",
+                reports_to=""):
     """Add a swarm agent to the catalog (catalog/agents/<id>.md). It belongs to no project:
     any Conductor can wake it. With `folder`, write it there as agent.md instead (a draft
     for you to approve). Returns its path."""
@@ -276,6 +278,8 @@ def write_agent(agent_id, name, summary, prompt="", domain="general", extends=""
         lines.append(f"codex_model: {one_line(codex_model)}")
     if source:
         lines.append(f"source: {one_line(source)}")
+    if reports_to:
+        lines.append(f"reports_to: {one_line(reports_to)}")
     lines += ["---", "", (prompt or "").strip(), ""]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")

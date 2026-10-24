@@ -1,27 +1,35 @@
-"""Bringing a Paperclip company over: its agents, skills, routines, projects and open tasks.
+"""Bringing Paperclip over: every company, with what its people built and what it did.
 
-Paperclip exports a company as a package of Markdown files (the Agent Companies format:
-COMPANY.md, agents/<slug>/AGENTS.md, skills/<slug>/SKILL.md, projects/<slug>/PROJECT.md,
-tasks/<slug>/TASK.md) with Paperclip's own details in `.paperclip.yaml` (models, schedules,
-task status). It comes as a zip from Paperclip's Export page, a folder from
-`paperclipai company export`, or a GitHub repository.
+Two ways in, one result. Paperclip on this computer (paperclip_local.py) gives everything: the
+newest database backup plus the instance's files (instructions, skills, uploads, the key its
+secrets are encrypted with). An exported package (the zip from Paperclip's Export page, a
+folder from `paperclipai company export`, or a GitHub repository in the Agent Companies
+format) gives what Paperclip puts in exports. Either becomes the same description of each
+company (paperclip_local.snapshot()'s shape), which preview() lays out and apply() imports:
 
-stage() unpacks it into the state folder and returns a token; preview() says what's in it and
-what Lago can't carry over; apply() imports what you ticked:
+- **agents** join the catalog with their instructions (and SOUL.md, TOOLS.md…), model, Claude
+  or Codex, and who they reported to; an agent that woke on a heartbeat gets a routine doing
+  its heartbeat checklist every N minutes, switched off;
+- **skills** install like GitHub skills (checked, scripts not executable). Paperclip's own are
+  left out;
+- **goals** keep their hierarchy; **projects** get their folder here (the one Paperclip used if
+  it's on this computer, else cloned from the repository or made);
+- **routines** keep their schedule (or a Lago webhook for a Paperclip webhook), switched off;
+- **tasks**, the whole tree, go to the backlog (backlog.py): open ones to start, finished ones
+  as history, with comments, documents and their revisions, labels, blockers and attachments;
+- **secrets** go to the keyring (values only from this computer's Paperclip, when you say so);
+- **history**: costs to Spending (never counted against budgets), approvals and the activity
+  log to History with their original dates; documents that belong to no task to files.
 
-- **agents** join the catalog with their instructions, model and runtime (Claude or Codex);
-- **skills** install the way GitHub skills do (checked against the Agent Skills spec, scripts
-  not executable). Paperclip's own skills (its API) aren't needed here and are left out;
-- **projects** get a folder on this computer, cloned from the project's repository when the
-  folder doesn't exist yet;
-- **routines** (recurring tasks) become Lago routines, switched off until you turn them on;
-- **open tasks** wait on the Tasks page until you start one (imported_tasks()).
+What Lago has no place for (plugins, chat channels, case workflows…) is listed, and Lago can
+be asked to study it. Importing again brings only what's new (a ledger of what came from where).
 
-Everything in a package is someone else's text: instructions that try to steer an agent are
-refused item by item (ghimport.check_text), and the zip is unpacked with no links, no paths
-outside its folder and size limits.
+Everything is someone else's text: instructions that try to steer an agent are refused item
+by item (ghimport.check_text), and a zip is unpacked with no links, no paths outside its folder
+and size limits.
 """
 
+import base64
 import io
 import json
 import re
@@ -35,9 +43,11 @@ from pathlib import Path
 
 import activity
 import agentdefs
+import backlog
 import config_store
 import ghimport
 import hub
+import paperclip_local
 import skill_sources
 from team import TeamError
 
@@ -46,24 +56,20 @@ KEEP_HOURS = 24
 MAX_ZIP_FILES = 5000
 MAX_ZIP_TOTAL = 200 * 1024 * 1024
 MAX_FILE = 20 * 1024 * 1024
-OPEN_STATUSES = ("backlog", "todo", "in_progress", "in_review", "blocked")
-OWN_SKILLS = re.compile(r"^paperclip(-|$)")  # Paperclip's own API skills: no use outside it
+OPEN_STATUSES = backlog.OPEN
+OWN_SKILLS = re.compile(r"^(paperclip(-|$)|para-memory-files$)")  # Paperclip's own: no use outside it
 ADAPTERS = {"claude_local": "", "codex_local": "codex"}  # Paperclip adapter -> Lago runtime
 WEEKDAYS = {"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
-MAX_COMMENTS_TEXT = 3000
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS imported_tasks (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    source      TEXT NOT NULL,              -- "paperclip"
-    ref         TEXT NOT NULL DEFAULT '',   -- its id there, e.g. ACME-12
-    title       TEXT NOT NULL,
-    body        TEXT NOT NULL DEFAULT '',
-    project     TEXT NOT NULL DEFAULT '',
-    agent       TEXT NOT NULL DEFAULT '',
-    priority    TEXT NOT NULL DEFAULT '',
-    status      TEXT NOT NULL DEFAULT 'waiting',  -- waiting, started, dismissed
-    created_at  REAL NOT NULL,
-    updated_at  REAL NOT NULL
+SOURCE = "paperclip"
+DOCS_DIR = config_store.DATA_DIR / "imports" / "paperclip"
+LEDGER = """
+CREATE TABLE IF NOT EXISTS import_ledger (
+    source      TEXT NOT NULL,
+    kind        TEXT NOT NULL,   -- agent, skill, goal, project, routine, heartbeat, task, secret, approval, activity
+    ref         TEXT NOT NULL,   -- its id where it came from
+    lago_id     TEXT NOT NULL,   -- what it became here
+    at          REAL NOT NULL,
+    PRIMARY KEY (source, kind, ref)
 );
 """
 
@@ -196,6 +202,8 @@ def _read(path):
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+# ---------------------------------------------------------------- unpacking a package
+
 # ---------------------------------------------------------------- unpacking
 
 def _cleanup():
@@ -264,34 +272,63 @@ def _github(url, target):
     return (sub or "").strip("/")
 
 
-def stage(data_url=None, folder=None, github=None):
-    """Unpack a package (a zip as a data URL, a folder on this computer, or a GitHub link) and
-    return its token for preview() and apply()."""
+def stage(data_url=None, folder=None, github=None, instance=None, backup=None):
+    """Get ready to import, and return a token for preview() and apply(): from Paperclip on
+    this computer (`instance`: its folder; `backup`: one of its backups, else the newest), a
+    backup file on its own (`backup`), or an exported package (a zip as a data URL, a folder,
+    or a GitHub repository)."""
     token, target = _new_stage()
     sub = ""
     try:
+        if instance or backup:
+            root = Path(instance).expanduser() if instance else None
+            if root and not root.is_dir():
+                raise PaperclipError(f"There's no Paperclip folder at {instance}.")
+            chosen = Path(backup).expanduser() if backup else next(iter(paperclip_local.backups(root)), None)
+            if not chosen or not chosen.is_file():
+                raise PaperclipError("This Paperclip has no backup yet. In Paperclip, run `paperclipai db:backup`, "
+                                     "or wait for its hourly one, then try again.")
+            paperclip_local.snapshot(chosen, root, with_secret_values=False)  # fails now if it isn't one
+            (target.parent / "source.json").write_text(json.dumps({"kind": "local", "root": str(root) if root else "", "backup": str(chosen)}))
+            target.mkdir()
+            return token
         if data_url:
-            import base64
             header, _, encoded = str(data_url).partition(",")
             if not header.endswith(";base64"):
                 raise PaperclipError("That file couldn't be read.")
-            _unzip(base64.b64decode(encoded), target)
+            data = base64.b64decode(encoded)
+            if data[:2] == b"\x1f\x8b" or b"Paperclip database backup" in data[:200]:
+                target.mkdir()
+                (target / "backup.sql.gz").write_bytes(data)  # a backup file chosen in the browser
+                paperclip_local.snapshot(target / "backup.sql.gz", None, with_secret_values=False)
+                (target.parent / "source.json").write_text(json.dumps({"kind": "local", "root": "", "backup": str(target / "backup.sql.gz")}))
+                return token
+            _unzip(data, target)
         elif folder:
             source = Path(folder).expanduser()
             if not source.is_dir():
                 raise PaperclipError(f"There's no folder {folder}.")
+            if (source / "db").is_dir() or (source / "data" / "backups").is_dir() or (source / "instances").is_dir():
+                shutil.rmtree(target.parent, ignore_errors=True)
+                found = paperclip_local.instances([source])
+                if not found:
+                    raise PaperclipError(f"There's no Paperclip instance in {folder}.")
+                return stage(instance=found[0]["path"])
             shutil.copytree(source, target, symlinks=True, ignore=shutil.ignore_patterns(".git", "node_modules"))
             if any(p.is_symlink() for p in target.rglob("*")):
                 raise PaperclipError("The folder has links in it; export the company again, or choose the zip.")
         elif github:
             sub = _github(github, target)
         else:
-            raise PaperclipError("Choose the exported zip, a folder, or a GitHub repository.")
+            raise PaperclipError("Choose Paperclip on this computer, the exported zip, a folder, or a GitHub repository.")
         root = _root(target / sub if sub else target)
+    except paperclip_local.pb.BackupError as error:
+        shutil.rmtree(target.parent, ignore_errors=True)
+        raise PaperclipError(str(error)) from error
     except Exception:
         shutil.rmtree(target.parent, ignore_errors=True)
         raise
-    (target.parent / "root.txt").write_text(str(root.relative_to(target)))
+    (target.parent / "source.json").write_text(json.dumps({"kind": "package", "root": str(root)}))
     return token
 
 
@@ -307,7 +344,26 @@ def _root(folder):
     raise PaperclipError("That isn't a Paperclip company package: there's no COMPANY.md or agents folder in it.")
 
 
-# ---------------------------------------------------------------- what's in a package
+def _source(token):
+    folder = _stage_dir(token)
+    try:
+        return json.loads((folder.parent / "source.json").read_text())
+    except (OSError, ValueError) as error:
+        raise PaperclipError("That import has expired. Choose the package again.") from error
+
+
+def load(token, with_secret_values=False):
+    """The companies behind a token, read fresh from their source."""
+    source = _source(token)
+    if source["kind"] == "local":
+        try:
+            return paperclip_local.snapshot(source["backup"], source["root"] or None, with_secret_values=with_secret_values)
+        except (paperclip_local.pb.BackupError, OSError) as error:
+            raise PaperclipError(f"The backup can't be read any more: {error}") from error
+    return {"source": "package", "companies": [company_from_package(Path(source["root"]))]}
+
+
+# ---------------------------------------------------------------- an exported package, described
 
 def _slug(text):
     return re.sub(r"[^a-z0-9]+", "-", str(text or "").lower()).strip("-")[:48].rstrip("-")
@@ -327,69 +383,91 @@ def _extension(root):
     return {}
 
 
-def read_package(root):
-    """Everything a package holds, as Lago will see it."""
+def _when(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def company_from_package(root):
+    """An exported package as paperclip_local.snapshot() describes a company. Ids are the
+    package's slugs; what exports leave out (costs, history, secrets) is simply empty."""
     ext = _extension(root)
     top = next((root / n for n in ("COMPANY.md", "TEAM.md") if (root / n).is_file()), None)  # a team package has no company
-    company_meta, company_body = markdown(_read(top)) if top else ({}, "")
-    agents = {}
+    meta, body = markdown(_read(top)) if top else ({}, "")
+    agents = []
     for folder in sorted(p for p in (root / "agents").glob("*") if p.is_dir()) if (root / "agents").is_dir() else []:
         entry = next((folder / n for n in ("AGENTS.md", "AGENT.md") if (folder / n).is_file()), None)
         if not entry:
             continue
-        meta, body = markdown(_read(entry))
-        extras = [p for p in sorted(folder.glob("*.md")) if p != entry]
-        agents[folder.name] = {"slug": folder.name, "meta": meta, "body": body, "extras": extras,
-                               "ext": (ext.get("agents") or {}).get(folder.name) or {}}
-    skills = {}
+        a_meta, a_body = markdown(_read(entry))
+        a_ext = (ext.get("agents") or {}).get(folder.name) or {}
+        adapter = a_ext.get("adapter") or {}
+        heartbeat = ((a_ext.get("runtime") or {}).get("heartbeat") or {})
+        agents.append({"id": folder.name, "name": a_meta.get("name") or folder.name.replace("-", " ").title(),
+                       "title": a_meta.get("title") or "", "role": a_meta.get("role") or a_ext.get("role") or "",
+                       "reports_to": a_meta.get("reportsTo"), "capabilities": a_ext.get("capabilities") or "",
+                       "adapter": adapter.get("type") or "", "model": str((adapter.get("config") or {}).get("model") or a_meta.get("model") or ""),
+                       "instructions": a_body, "extras": {p.name: _read(p) for p in sorted(folder.glob("*.md")) if p != entry},
+                       "status": "", "heartbeat_minutes": round(heartbeat["intervalSec"] / 60) if heartbeat.get("enabled") and heartbeat.get("intervalSec") else 0,
+                       "budget_cents": a_ext.get("budgetMonthlyCents") or 0, "skills": [str(s) for s in a_meta.get("skills") or []],
+                       "permissions": a_ext.get("permissions") or {}})
+    skills = []
     for path in sorted((root / "skills").rglob("SKILL.md")) if (root / "skills").is_dir() else []:
-        meta, body = markdown(_read(path))
-        slug = path.parent.relative_to(root / "skills").as_posix().split("/")[-1]
-        skills[slug] = {"slug": slug, "meta": meta, "body": body, "folder": path.parent}
-    projects = {}
+        s_meta, s_body = markdown(_read(path))
+        metadata = s_meta.get("metadata") if isinstance(s_meta.get("metadata"), dict) else {}
+        sources = metadata.get("sources") or []
+        files = {} if not s_body.strip() and sources else {p.relative_to(path.parent).as_posix(): p.read_bytes()
+                                                              for p in sorted(path.parent.rglob("*")) if p.is_file() and not p.is_symlink()}
+        skills.append({"id": path.parent.name, "slug": path.parent.name, "name": s_meta.get("name") or path.parent.name,
+                       "description": s_meta.get("description") or "", "files": files,
+                       "source": next((s.get("url") or s.get("repo") or "" for s in sources if isinstance(s, dict)), ""),
+                       "source_kind": "referenced" if not files else "package"})
+    projects = []
     for path in sorted((root / "projects").glob("*/PROJECT.md")) if (root / "projects").is_dir() else []:
-        meta, body = markdown(_read(path))
-        projects[path.parent.name] = {"slug": path.parent.name, "meta": meta, "body": body,
-                                      "ext": (ext.get("projects") or {}).get(path.parent.name) or {}}
-    tasks = {}
+        p_meta, p_body = markdown(_read(path))
+        p_ext = (ext.get("projects") or {}).get(path.parent.name) or {}
+        spaces = p_ext.get("workspaces") or {}
+        spaces = [w for w in (spaces.values() if isinstance(spaces, dict) else spaces) if isinstance(w, dict)]
+        primary = next((w for w in spaces if w.get("isPrimary")), spaces[0] if spaces else {})
+        projects.append({"id": path.parent.name, "name": p_meta.get("name") or path.parent.name.replace("-", " ").title(),
+                         "description": p_meta.get("description") or _first_sentence(p_body, 300), "status": p_ext.get("status") or "",
+                         "lead": p_meta.get("owner") or p_ext.get("leadAgentSlug"), "goals": [], "folder": "", "recorded_folder": "",
+                         "repo": primary.get("repoUrl") or "", "repo_ref": primary.get("repoRef") or "", "archived": False})
+    issues, routines = [], []
     for path in sorted(root.rglob("TASK.md")):
-        meta, body = markdown(_read(path))
+        t_meta, t_body = markdown(_read(path))
         slug = path.parent.name
-        project = meta.get("project") or (path.parts[-4] if len(path.parts) >= 4 and path.parts[-3] == "tasks"
-                                          and path.parts[-5:-4] == ("projects",) else None)
-        recurring = bool(meta.get("recurring")) or slug in (ext.get("routines") or {}) or bool(meta.get("schedule"))
-        tasks[slug] = {"slug": slug, "meta": meta, "body": body, "project": project, "recurring": recurring,
-                       "ext": ((ext.get("routines") if recurring else ext.get("tasks")) or {}).get(slug) or {}}
-    return {"company": {"name": company_meta.get("name") or root.name, "description": company_meta.get("description") or _first_sentence(company_body)},
-            "agents": agents, "skills": skills, "projects": projects, "tasks": tasks, "ext": ext}
-
-
-def _model(agent):
-    adapter = agent["ext"].get("adapter") or {}
-    config = adapter.get("config") or {}
-    return str(config.get("model") or agent["meta"].get("model") or ""), str(adapter.get("type") or "")
-
-
-def _prompt(agent):
-    """The agent's instructions: its AGENTS.md, then its other notes (SOUL.md, TOOLS.md). The
-    heartbeat checklist is about Paperclip's own loop, so it stays behind."""
-    parts = [agent["body"].strip()]
-    for path in agent["extras"]:
-        if path.name.upper() == "HEARTBEAT.MD":
+        project = t_meta.get("project") or (path.parts[-4] if len(path.parts) >= 5 and path.parts[-3] == "tasks" and path.parts[-5] == "projects" else None)
+        recurring = bool(t_meta.get("recurring")) or slug in (ext.get("routines") or {}) or bool(t_meta.get("schedule"))
+        if recurring:
+            r_ext = (ext.get("routines") or {}).get(slug) or {}
+            routines.append({"id": slug, "title": t_meta.get("name") or slug.replace("-", " ").title(), "description": t_body,
+                             "assignee": t_meta.get("assignee"), "project": project, "goal": None, "status": r_ext.get("status") or "active",
+                             "triggers": [{"kind": t.get("kind"), "cron": t.get("cronExpression"), "timezone": t.get("timezone"),
+                                           "enabled": t.get("enabled", True) is not False, "label": t.get("label") or ""}
+                                          for t in r_ext.get("triggers") or [] if isinstance(t, dict)],
+                             "documents": []})
             continue
-        text = _read(path).strip()
-        if text:
-            parts.append(f"## {path.stem.title()}\n\n{text}")
-    return "\n\n".join(p for p in parts if p)
+        t_ext = (ext.get("tasks") or {}).get(slug) or {}
+        issues.append({"id": slug, "identifier": str(t_ext.get("identifier") or ""), "title": t_meta.get("name") or t_meta.get("title") or slug.replace("-", " ").title(),
+                       "description": t_body, "status": str(t_ext.get("status") or "todo"), "priority": str(t_ext.get("priority") or ""),
+                       "assignee": t_meta.get("assignee"), "parent": t_ext.get("parent"), "project": project, "goal": None,
+                       "labels": [str(x) for x in t_ext.get("labels") or []], "blocked_by": [str(x) for x in t_ext.get("blockedBy") or []],
+                       "comments": [{"by": c.get("authorAgentSlug") or ("you" if c.get("authorType") == "user" else "someone"), "text": c.get("body") or "", "at": _when(c.get("createdAt"))}
+                                    for c in t_ext.get("comments") or [] if isinstance(c, dict)],
+                       "documents": [], "attachments": [], "created_at": _when(t_ext.get("createdAt")),
+                       "finished_at": _when(t_ext.get("completedAt") or t_ext.get("cancelledAt")), "origin": ""})
+    return {"id": _slug(meta.get("slug") or meta.get("name") or root.name) or "company", "name": meta.get("name") or root.name,
+            "description": meta.get("description") or _first_sentence(body), "status": "", "prefix": "", "budget_cents": 0,
+            "agents": agents, "skills": skills, "goals": [], "projects": projects, "issues": issues, "routines": routines,
+            "approvals": [], "costs": [], "budgets": [], "secrets": [], "activity": [], "documents": [], "other": [], "runs": 0}
 
 
-def _blocked(*texts):
-    for name, text in texts:
-        problem = ghimport.check_text(name, text or "")
-        if problem:
-            return problem
-    return ""
-
+# ---------------------------------------------------------------- schedules
 
 def _cron(cron, timezone="", now=None):
     """A Paperclip schedule as Lago's: {"repeat", "every_minutes", "when", "text"}, or None
@@ -442,15 +520,57 @@ def _local_time(hour, minute, timezone, now=None):
     return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
-def _routine_schedule(task):
-    triggers = task["ext"].get("triggers") or []
-    schedule = next((t for t in triggers if isinstance(t, dict) and t.get("kind") == "schedule" and t.get("enabled", True) is not False), None)
-    if not schedule:
-        return None, ("it runs on a webhook in Paperclip: set when it runs here" if triggers else "the package gives no schedule: set when it runs here")
-    mapped = _cron(schedule.get("cronExpression"), schedule.get("timezone"))
-    if not mapped:
-        return None, f"its schedule ({schedule.get('cronExpression')}) is one Lago's routines can't repeat on"
-    return mapped, ""
+def _schedule(routine):
+    """Lago's schedule for a routine's triggers: (schedule or None, webhook?, why not)."""
+    triggers = [t for t in routine["triggers"] if t.get("enabled", True)]
+    webhook = any(t.get("kind") == "webhook" for t in triggers)
+    for trigger in triggers:
+        if trigger.get("kind") == "schedule":
+            mapped = _cron(trigger.get("cron"), trigger.get("timezone"))
+            if mapped:
+                return mapped, webhook, ""
+            return None, webhook, f"its schedule ({trigger.get('cron')}) is one Lago's routines can't repeat on: set when it runs"
+    if webhook:
+        return None, True, ""
+    return None, False, "no schedule came with it: set when it runs"
+
+
+# ---------------------------------------------------------------- the preview
+
+def _ledger(conn=None):
+    with hub.connect() as c:
+        c.executescript(LEDGER)
+        return {(r["kind"], r["ref"]): r["lago_id"] for r in c.execute("SELECT kind, ref, lago_id FROM import_ledger WHERE source = ?", (SOURCE,))}
+
+
+def _remember(kind, ref, lago_id):
+    with hub.connect() as conn:
+        conn.executescript(LEDGER)
+        conn.execute("INSERT OR REPLACE INTO import_ledger (source, kind, ref, lago_id, at) VALUES (?, ?, ?, ?, ?)",
+                     (SOURCE, kind, str(ref), str(lago_id), time.time()))
+
+
+def _prompt(agent):
+    """An agent's instructions: its AGENTS.md, then its other notes (SOUL.md, TOOLS.md…). The
+    heartbeat checklist becomes its heartbeat routine instead."""
+    parts = [str(agent["instructions"] or "").strip()]
+    for name, text in sorted(agent["extras"].items()):
+        if Path(name).stem.upper() != "HEARTBEAT" and str(text).strip():
+            parts.append(f"## {Path(name).stem.title()}\n\n{str(text).strip()}")
+    if not any(parts):  # its files weren't there (a backup on its own): start from who it was
+        role = agent.get("title") or agent.get("role") or ""
+        parts = [f"You are {agent['name']}{', ' + role if role and role.lower() != agent['name'].lower() else ''}."
+                 + (f" {agent['capabilities']}" if agent.get("capabilities") else "")]
+    return "\n\n".join(p for p in parts if p)
+
+
+def _heartbeat_text(agent):
+    text = next((str(t).strip() for n, t in agent["extras"].items() if Path(n).stem.upper() == "HEARTBEAT" and str(t).strip()), "")
+    return text or f"Do your regular check-in as {agent['name']}: review your open work, move the most important thing forward, and report what changed."
+
+
+def _blocked(name, text):
+    return ghimport.check_text(name, text or "")
 
 
 def _suggest_folder(slug, name):
@@ -460,95 +580,100 @@ def _suggest_folder(slug, name):
     return f"~/lago-work/{slug or _slug(name)}"
 
 
-def _repo(project):
-    workspaces = project["ext"].get("workspaces") or {}
-    items = list(workspaces.values()) if isinstance(workspaces, dict) else list(workspaces)
-    items = [w for w in items if isinstance(w, dict) and w.get("repoUrl")]
-    primary = next((w for w in items if w.get("isPrimary")), items[0] if items else None)
-    return (primary or {}).get("repoUrl") or ""
+def _money(cents):
+    return f"${cents / 100:,.2f}"
 
 
 def preview(token):
-    """What the package holds and what Lago does with each item:
-    {"company", "agents", "skills", "projects", "routines", "tasks", "left_out"}. Each item has
-    "slug", "name", a "note", and "blocked" (why it can't be imported) or "ok"."""
-    root = _root_of(token)
-    package = read_package(root)
+    """What each company holds and what Lago does with it: {"source", "backup_at",
+    "companies": [{"id", "name", ..., "agents", "skills", "goals", "projects", "routines",
+    "heartbeats", "tasks", "secrets", "history", "documents", "other", "left_out"}]}. Items carry
+    "id", "name", a "note", and "blocked" (why it can't come over) or "done" (already here)."""
+    data = load(token)
+    ledger = _ledger()
     catalog = agentdefs.catalog()
     config = config_store.load()
-    agents = []
-    for slug, agent in package["agents"].items():
-        model, adapter = _model(agent)
-        name = agent["meta"].get("name") or slug.replace("-", " ").title()
-        runtime = ADAPTERS.get(adapter, "")
-        note = [agent["meta"].get("title") or "", "on Codex" if runtime == "codex" else "", model]
-        if adapter and adapter not in ADAPTERS:
-            note.append(f"runs on {adapter} in Paperclip: here it runs on Claude")
-        blocked = _blocked((f"agents/{slug}", _prompt(agent)))
-        if not blocked and not _prompt(agent).strip():
-            blocked = "it has no instructions"
-        agents.append({"slug": slug, "name": name, "note": " · ".join(n for n in note if n),
-                       "exists": _slug(name) in catalog, "skills": [str(s) for s in agent["meta"].get("skills") or []],
-                       "blocked": blocked})
-    skills = []
-    for slug, skill in package["skills"].items():
-        name = skill["meta"].get("name") or slug
-        sources = ((skill["meta"].get("metadata") or {}).get("sources") or []) if isinstance(skill["meta"].get("metadata"), dict) else []
-        referenced = not skill["body"].strip() and sources
-        blocked = ""
-        if OWN_SKILLS.match(slug) or OWN_SKILLS.match(str(name)):
-            blocked = "Paperclip's own skill: Lago doesn't need it"
-        elif referenced:
-            url = next((s.get("url") or s.get("repo") for s in sources if isinstance(s, dict)), "")
-            blocked = f"only a link to {url or 'its source'}; export with skills included, or import it from Find on GitHub"
-        elif (skill_sources.SKILLS_DIR / str(name)).exists() or (skill_sources.LINK_DIR / str(name)).exists():
-            blocked = "you already have a skill with this name"
-        else:
-            blocked = _blocked((f"skills/{slug}/SKILL.md", skill["body"]))
-        skills.append({"slug": slug, "name": name, "note": _first_sentence(skill["meta"].get("description"), 140), "blocked": blocked})
-    projects = []
-    for slug, project in package["projects"].items():
-        name = project["meta"].get("name") or slug.replace("-", " ").title()
-        repo = _repo(project)
-        projects.append({"slug": slug, "name": name, "note": _first_sentence(project["meta"].get("description") or project["body"], 140),
-                         "repo": repo, "folder": _suggest_folder(slug, name),
-                         "exists": slug in config["projects"], "blocked": ""})
-    routines, tasks, finished = [], [], 0
-    for slug, task in package["tasks"].items():
-        title = task["meta"].get("name") or task["meta"].get("title") or slug.replace("-", " ").title()
-        assignee = task["meta"].get("assignee") or ""
-        if task["recurring"]:
-            schedule, why = _routine_schedule(task)
-            blocked = _blocked((f"tasks/{slug}", task["body"]))
-            if not blocked and not assignee:
-                blocked = "no agent does it"
-            elif not blocked and assignee not in package["agents"] and _slug(assignee) not in catalog:
-                blocked = f"its agent ({assignee}) isn't in the package"
-            routines.append({"slug": slug, "name": title, "agent": assignee, "project": task["project"] or "",
-                             "note": schedule["text"] if schedule else why, "schedule": bool(schedule), "blocked": blocked})
-            continue
-        status = str(task["ext"].get("status") or "todo")
-        if status not in OPEN_STATUSES:
-            finished += 1
-            continue
-        tasks.append({"slug": slug, "name": title, "agent": assignee, "project": task["project"] or "",
-                      "note": " · ".join(x for x in (str(task["ext"].get("identifier") or ""), status.replace("_", " "),
-                                                     str(task["ext"].get("priority") or "")) if x),
-                      "blocked": _blocked((f"tasks/{slug}", task["body"]))})
-    left_out = ["Who reports to whom: in Lago, each task gets a lead that hands the work out.",
-                "Monthly budgets per agent: Lago's budgets are per task and per conversation (Accounts & Budgets).",
-                "Agents waking on their own (heartbeats): make a routine for anything an agent should do regularly.",
-                "Secrets: packages never carry them. Add the ones your agents need under Projects → Secrets."]
-    if finished:
-        left_out.insert(0, f"{finished} finished or cancelled task{'s' if finished != 1 else ''}: only open tasks come over.")
-    return {"company": package["company"], "agents": agents, "skills": skills, "projects": projects,
-            "routines": routines, "tasks": tasks, "left_out": left_out}
+    out = []
+    for c in data["companies"]:
+        names = {a["id"]: a["name"] for a in c["agents"]}
+        agents = []
+        for a in c["agents"]:
+            runtime = ADAPTERS.get(a["adapter"], "")
+            note = [a["title"], "on Codex" if runtime == "codex" else "", a["model"],
+                    f"reported to {names[a['reports_to']]}" if a.get("reports_to") in names else ""]
+            if a["adapter"] and a["adapter"] not in ADAPTERS:
+                note.append(f"runs on {a['adapter']} in Paperclip: here it runs on Claude")
+            prompt = _prompt(a)
+            blocked = _blocked(f"agent {a['name']}", prompt)
+            if not str(a["instructions"] or "").strip():
+                note.append("its instructions weren't found: it starts from its role")
+            agents.append({"id": a["id"], "name": a["name"], "note": " · ".join(n for n in note if n), "blocked": blocked,
+                           "done": ("agent", a["id"]) in ledger, "exists": _slug(a["name"]) in catalog})
+        skills = []
+        for s in c["skills"]:
+            blocked = ""
+            if OWN_SKILLS.match(s["slug"]) or OWN_SKILLS.match(str(s["name"])):
+                blocked = "Paperclip's own skill: Lago doesn't need it"
+            elif not s["files"]:
+                blocked = f"only a link to {s['source'] or 'its source'}: install it from Find on GitHub"
+            elif (skill_sources.SKILLS_DIR / str(s["name"])).exists() or (skill_sources.LINK_DIR / str(s["name"])).exists():
+                blocked = "you already have a skill with this name"
+            else:
+                blocked = _blocked(f"skill {s['name']}", s["files"].get("SKILL.md", b"").decode("utf-8", "replace"))
+            skills.append({"id": s["id"], "name": s["name"], "note": _first_sentence(s["description"], 140), "blocked": blocked,
+                           "done": ("skill", s["id"]) in ledger})
+        goal_titles = {g["id"]: g["title"] for g in c["goals"]}
+        goals = [{"id": g["id"], "name": g["title"], "note": " · ".join(x for x in (g["status"], f"under {goal_titles[g['parent']]}" if g.get("parent") in goal_titles else "") if x),
+                  "blocked": "", "done": ("goal", g["id"]) in ledger} for g in c["goals"]]
+        projects = []
+        for p in c["projects"]:
+            folder = p["folder"] and str(p["folder"]).replace(str(Path.home()), "~", 1)
+            projects.append({"id": p["id"], "name": p["name"], "note": _first_sentence(p["description"], 140), "repo": p["repo"],
+                             "folder": folder or _suggest_folder(_slug(p["name"]), p["name"]), "found": bool(folder),
+                             "exists": _slug(p["name"]) in config["projects"], "blocked": "", "done": ("project", p["id"]) in ledger})
+        routines = []
+        for r in c["routines"]:
+            schedule, webhook, why = _schedule(r)
+            blocked = _blocked(f"routine {r['title']}", r["description"]) or ("" if r.get("assignee") in names or _slug(r.get("assignee")) in catalog else "no agent does it")
+            note = schedule["text"] if schedule else ("on a webhook: Lago gives it a new link" if webhook else why)
+            routines.append({"id": r["id"], "name": r["title"], "agent": names.get(r.get("assignee"), r.get("assignee") or ""),
+                             "note": note + (" · paused in Paperclip" if r["status"] == "paused" else ""), "blocked": blocked,
+                             "done": ("routine", r["id"]) in ledger})
+        heartbeats = [{"id": a["id"], "name": f"{a['name']}'s heartbeat", "note": f"every {a['heartbeat_minutes']} minutes",
+                       "blocked": "" if a["heartbeat_minutes"] >= 5 else "more often than every 5 minutes",
+                       "done": ("heartbeat", a["id"]) in ledger} for a in c["agents"] if a["heartbeat_minutes"]]
+        open_tasks = [i for i in c["issues"] if i["status"] in OPEN_STATUSES]
+        tasks = {"open": len(open_tasks), "finished": len(c["issues"]) - len(open_tasks),
+                 "comments": sum(len(i["comments"]) for i in c["issues"]), "documents": sum(len(i["documents"]) for i in c["issues"]),
+                 "already": sum(1 for i in c["issues"] if ("task", i["id"]) in ledger),
+                 "sample": [i["title"] for i in sorted(open_tasks, key=lambda i: ({"critical": 0, "urgent": 0, "high": 1}.get(i["priority"], 2)))][:5],
+                 "blocked": [i["title"] for i in c["issues"] if _blocked("task", i["description"])]}
+        user_secrets = [s for s in c["secrets"] if not s["internal"]]
+        secrets_out = [{"id": s["id"], "name": s["name"], "note": " · ".join(x for x in (_env_name(s), "value can come over" if s["has_value"] else "name only: add its value here") if x),
+                        "has_value": s["has_value"], "blocked": "", "done": ("secret", s["id"]) in ledger} for s in user_secrets]
+        spent = sum(x["cents"] for x in c["costs"])
+        history = {"costs": len(c["costs"]), "spent": _money(spent), "approvals": len(c["approvals"]), "activity": len(c["activity"]),
+                   "runs": c["runs"], "done": ("history", c["id"]) in ledger}
+        documents = [{"id": d["key"], "name": d["title"], "note": f"{len(d['revisions'])} revisions", "blocked": "", "done": ("document", d["key"]) in ledger}
+                     for d in c["documents"]]
+        left_out = ["Who reports to whom is kept on each agent: in Lago, each task gets a lead that hands the work out."]
+        for b in c["budgets"]:
+            left_out.append(f"A monthly budget of {_money(b['cents'])} for the {b['scope']}: Lago's budgets are per task and per conversation "
+                            "(Accounts & Budgets).")
+        if any(a["permissions"] for a in c["agents"]):
+            left_out.append("Agents' permissions in Paperclip (creating agents, skills): in Lago, set what agents may do under Permissions.")
+        if c["runs"]:
+            left_out.append(f"The {c['runs']} heartbeat runs' logs stay in Paperclip; their costs and outcomes come over with the history.")
+        left_out += [f"{o['count']} {o['label']}: Lago has no place for these yet. Ask Lago to look at them after the import." for o in c["other"]]
+        out.append({"id": c["id"], "name": c["name"], "description": c["description"], "agents": agents, "skills": skills, "goals": goals,
+                    "projects": projects, "routines": routines, "heartbeats": heartbeats, "tasks": tasks, "secrets": secrets_out,
+                    "history": history, "documents": documents, "other": c["other"], "left_out": left_out})
+    out.sort(key=lambda x: -(len(x["agents"]) + x["tasks"]["open"] + x["tasks"]["finished"] + len(x["routines"])))  # the main company first
+    return {"source": data["source"], "backup": data.get("backup", ""), "backup_at": data.get("backup_at"), "companies": out}
 
 
-def _root_of(token):
-    folder = _stage_dir(token)
-    rel = (folder.parent / "root.txt").read_text().strip() if (folder.parent / "root.txt").exists() else ""
-    return folder / rel if rel and rel != "." else folder
+def _env_name(secret):
+    return re.sub(r"[^A-Z0-9_]+", "_", str(secret.get("key") or secret["name"]).upper()).strip("_")
 
 
 # ---------------------------------------------------------------- importing
@@ -560,180 +685,301 @@ def _clone_into(url, folder):
         raise PaperclipError(f"couldn't clone {url}: {(proc.stderr or proc.stdout).strip()[-160:]}")
 
 
-def _add_project(slug, project, folder_text, catalog_ids):
+def _add_project(project, folder_text, agent_ids):
     """The project in config.json, its folder made (or cloned) if it isn't there yet."""
     import api
     config = config_store.without_swarm(config_store.load())
-    project_id = slug if slug not in config["projects"] else f"{slug[:44]}-2"
-    n = 2
+    base = _slug(project["name"]) or "project"
+    project_id, n = base, 1
     while project_id in config["projects"]:
         n += 1
-        project_id = f"{slug[:44]}-{n}"
-    folder = Path(str(folder_text or "").strip() or _suggest_folder(slug, "")).expanduser()
+        project_id = f"{base[:44]}-{n}"
+    folder = Path(str(folder_text or "").strip() or _suggest_folder(base, project["name"])).expanduser()
     if not folder.is_absolute():
-        raise PaperclipError(f"give {project['meta'].get('name') or slug} a full folder path")
-    repo = _repo(project)
+        raise PaperclipError(f"give {project['name']} a full folder path")
     if not folder.exists():
-        if repo and re.match(r"^(https://|git@)", repo):
+        if project["repo"] and re.match(r"^(https://|git@)", project["repo"]):
             folder.parent.mkdir(parents=True, exist_ok=True)
-            _clone_into(repo, folder)
+            _clone_into(project["repo"], folder)
         else:
             folder.mkdir(parents=True)
-    owner = project["meta"].get("owner")
     config["projects"][project_id] = {
-        "name": project["meta"].get("name") or slug.replace("-", " ").title(), "icon": "cube",
-        "cwd": str(folder).replace(str(Path.home()), "~", 1), "repo": repo, "branch": "main",
-        "description": _first_sentence(project["meta"].get("description") or project["body"], 300), "stack": "",
-        "context": [], "vars": {}, "agents": [catalog_ids[owner]] if owner in catalog_ids else [], "areas": {},
-        "links": [], "services": [], "commands": {}, "github": {"repos": [], "boards": []}, "mcp_servers": {}}
+        "name": project["name"], "icon": "cube", "cwd": str(folder).replace(str(Path.home()), "~", 1), "repo": project["repo"],
+        "branch": project.get("repo_ref") or "main", "description": _first_sentence(project["description"], 300), "stack": "",
+        "context": [], "vars": {}, "agents": sorted(set(agent_ids)), "areas": {}, "links": [], "services": [], "commands": {},
+        "github": {"repos": [], "boards": []}, "mcp_servers": {}}
     api._validate_projects(config["projects"])
     config_store.save(config)
     return project_id
 
 
-def _comments(task):
-    out, used = [], 0
-    for comment in task["ext"].get("comments") or []:
-        if not isinstance(comment, dict) or not str(comment.get("body") or "").strip():
-            continue
-        who = comment.get("authorAgentSlug") or ("you" if comment.get("authorType") == "user" else "someone")
-        line = f"- {who}: {' '.join(str(comment['body']).split())}"
-        if used + len(line) > MAX_COMMENTS_TEXT:
-            out.append("- (older comments left out)")
-            break
-        out.append(line)
-        used += len(line)
-    return out
-
-
-def apply(token, agents=(), skills=(), projects=None, routines=(), tasks=()):
-    """Import what you ticked. `projects` maps a project's slug to its folder here. Returns
-    {"done": [lines], "skipped": [lines]}."""
-    root = _root_of(token)
-    package = read_package(root)
-    shown = preview(token)
-    allowed = {kind: {i["slug"] for i in shown[kind] if not i["blocked"]} for kind in ("agents", "skills", "routines", "tasks")}
+def apply(token, company, agents=(), skills=(), goals=(), projects=None, routines=(), heartbeats=(), tasks="open",
+          secrets=(), secret_values=False, history=False, documents=()):
+    """Import what you ticked from one company. `projects` maps a project's id to its folder
+    here; `tasks` is "open", "all" or "none". Returns {"done": [lines], "skipped": [lines],
+    "left": [lines for Lago to look at]}."""
+    data = load(token, with_secret_values=bool(secret_values))
+    c = next((x for x in data["companies"] if x["id"] == company), None)
+    if not c:
+        raise PaperclipError("That company isn't in this import.")
+    shown = next(x for x in preview(token)["companies"] if x["id"] == company)
+    usable = {kind: {i["id"] for i in shown[kind] if not i["blocked"]} for kind in ("agents", "skills", "routines", "heartbeats")}
+    ledger = _ledger()
     done, skipped = [], []
     projects = projects or {}
 
+    # skills first: agents name them
     skill_names = {}
-    for slug in skills:
-        if slug not in allowed["skills"]:
-            continue
-        skill = package["skills"][slug]
+    for s in c["skills"]:
+        if ("skill", s["id"]) in ledger:
+            skill_names[s["slug"]] = ledger[("skill", s["id"])]
+    for s in (x for x in c["skills"] if x["id"] in skills and x["id"] in usable["skills"] and ("skill", x["id"]) not in ledger):
         try:
-            ghimport._check_tree(root, ghimport._files_under(skill["folder"]))
-            name = skill_sources.install_from(skill["folder"], "paperclip", "", f"skills/{slug}")
-            skill_names[slug] = name
+            name = _install_skill(s)
+            skill_names[s["slug"]] = name
+            _remember("skill", s["id"], name)
             done.append(f"skill {name}")
-        except (skill_sources.SkillSourceError, TeamError) as error:
-            skipped.append(f"skill {slug}: {error}")
+        except (skill_sources.SkillSourceError, TeamError, OSError) as error:
+            skipped.append(f"skill {s['name']}: {error}")
 
-    catalog_ids = {}
-    for slug in agents:
-        if slug not in allowed["agents"]:
-            continue
-        agent = package["agents"][slug]
-        name = agent["meta"].get("name") or slug.replace("-", " ").title()
-        model, adapter = _model(agent)
-        wanted = [skill_names.get(str(s), str(s)) for s in agent["meta"].get("skills") or [] if not OWN_SKILLS.match(str(s))]
+    # agents
+    ids = {a["id"]: ledger[("agent", a["id"])] for a in c["agents"] if ("agent", a["id"]) in ledger}
+    chosen = [a for a in c["agents"] if a["id"] in agents and a["id"] in usable["agents"] and a["id"] not in ids]
+    for a in chosen:
+        ids[a["id"]] = ghimport._free_id(_slug(a["name"]) or "agent")
+        while ids[a["id"]] in [ids[x["id"]] for x in chosen if x is not a and x["id"] in ids]:
+            ids[a["id"]] += "-2"
+    for a in chosen:
+        runtime = ADAPTERS.get(a["adapter"], "")
+        wanted = [skill_names.get(s, s) for s in a["skills"] if not OWN_SKILLS.match(s)]
         try:
-            agent_id = ghimport._free_id(_slug(name) or slug)
-            agentdefs.write_agent(agent_id, name, agent["meta"].get("title") or _first_sentence(agent["body"]) or name,
-                                  prompt=_prompt(agent), domain="imported", model=model if ADAPTERS.get(adapter) != "codex" else "",
-                                  source="paperclip", skills=", ".join(wanted), runtime=ADAPTERS.get(adapter, ""),
-                                  codex_model=model if ADAPTERS.get(adapter) == "codex" else "")
-            catalog_ids[slug] = agent_id
-            done.append(f"agent {name}")
+            agentdefs.write_agent(ids[a["id"]], a["name"], a["title"] or _first_sentence(a["capabilities"] or a["instructions"]) or a["name"],
+                                  prompt=_prompt(a), domain="imported", model="" if runtime == "codex" else a["model"],
+                                  source=SOURCE, skills=", ".join(wanted), runtime=runtime,
+                                  codex_model=a["model"] if runtime == "codex" else "",
+                                  reports_to=ids.get(a.get("reports_to"), ""), tags=[c["name"]])
+            _remember("agent", a["id"], ids[a["id"]])
+            done.append(f"agent {a['name']}")
         except ValueError as error:
-            skipped.append(f"agent {name}: {error}")
+            ids.pop(a["id"], None)
+            skipped.append(f"agent {a['name']}: {error}")
 
-    project_ids = {}
-    for slug, folder in projects.items():
-        if slug not in package["projects"]:
+    # goals, parents first
+    import goals as goals_mod
+    goal_ids = {g["id"]: int(ledger[("goal", g["id"])]) for g in c["goals"] if ("goal", g["id"]) in ledger}
+    pending = [g for g in c["goals"] if g["id"] in goals and g["id"] not in goal_ids]
+    while pending:
+        ready = [g for g in pending if not g.get("parent") or g["parent"] in goal_ids or g["parent"] not in {x["id"] for x in pending}]
+        for g in ready:
+            pending.remove(g)
+            try:
+                row = goals_mod.add(g["title"], description=g["description"], parent=goal_ids.get(g.get("parent")))
+                if g["status"] in ("achieved", "completed", "done"):
+                    goals_mod.update(row["id"], status="achieved")
+                elif g["status"] in ("cancelled", "abandoned", "dropped"):
+                    goals_mod.update(row["id"], status="dropped")
+                goal_ids[g["id"]] = row["id"]
+                _remember("goal", g["id"], row["id"])
+                done.append(f"goal {g['title']}")
+            except goals_mod.GoalError as error:
+                skipped.append(f"goal {g['title']}: {error}")
+        if not ready:
+            break
+
+    # projects
+    project_ids = {p["id"]: ledger[("project", p["id"])] for p in c["projects"] if ("project", p["id"]) in ledger}
+    for p in c["projects"]:
+        if p["id"] not in projects or p["id"] in project_ids:
             continue
+        team = [ids[i["assignee"]] for i in c["issues"] if i.get("project") == p["id"] and i.get("assignee") in ids]
+        team += [ids[p["lead"]]] if p.get("lead") in ids else []
         try:
-            project_ids[slug] = _add_project(slug, package["projects"][slug], folder, catalog_ids)
-            done.append(f"project {package['projects'][slug]['meta'].get('name') or slug}")
+            project_ids[p["id"]] = _add_project(p, projects[p["id"]], team)
+            _remember("project", p["id"], project_ids[p["id"]])
+            done.append(f"project {p['name']}")
         except (PaperclipError, OSError, subprocess.SubprocessError) as error:
-            skipped.append(f"project {slug}: {error}")
+            skipped.append(f"project {p['name']}: {error}")
 
+    # routines and heartbeats, switched off
     import routines as routines_mod
-    for slug in routines:
-        if slug not in allowed["routines"]:
-            continue
-        task = package["tasks"][slug]
-        title = task["meta"].get("name") or slug.replace("-", " ").title()
-        assignee = str(task["meta"].get("assignee") or "")
-        agent_id = catalog_ids.get(assignee) or (_slug(assignee) if _slug(assignee) in agentdefs.catalog() else "")
+    hooks = []
+    for r in (x for x in c["routines"] if x["id"] in routines and x["id"] in usable["routines"] and ("routine", x["id"]) not in ledger):
+        agent_id = ids.get(r.get("assignee")) or (_slug(r.get("assignee")) if _slug(r.get("assignee")) in agentdefs.catalog() else "")
         if not agent_id:
-            skipped.append(f"routine {title}: import its agent ({assignee}) too")
+            skipped.append(f"routine {r['title']}: import its agent too")
             continue
-        schedule, _ = _routine_schedule(task)
+        schedule, webhook, _ = _schedule(r)
+        text = "\n\n".join([r["description"].strip() or r["title"]] + [f"## {d['title']}\n\n{d['body']}" for d in r["documents"] if d["body"].strip()])
         try:
-            row = routines_mod.create(title, agent_id, task["body"].strip() or title,
-                                      project=project_ids.get(task["project"] or "", ""),
-                                      folder="" if project_ids.get(task["project"] or "") else "~/lago-work/routines",
-                                      repeat=schedule["repeat"] if schedule else "daily",
+            row = routines_mod.create(r["title"], agent_id, text, project=project_ids.get(r.get("project") or "", ""),
+                                      folder="" if project_ids.get(r.get("project") or "") else "~/lago-work/routines",
+                                      repeat=schedule["repeat"] if schedule else ("never" if webhook else "daily"),
                                       every_minutes=schedule["every_minutes"] if schedule else None,
                                       when=schedule["when"] if schedule else None)
             routines_mod.set_status(row["id"], "paused")
-            done.append(f"routine {title} (switched off" + ("" if schedule else "; set its schedule") + ")")
+            if webhook:
+                routines_mod.new_hook(row["id"])
+                hooks.append(r["title"])
+            _remember("routine", r["id"], row["id"])
+            done.append(f"routine {r['title']} (switched off" + ("; new webhook link on its page" if webhook else "" if schedule else "; set when it runs") + ")")
         except routines_mod.RoutineError as error:
-            skipped.append(f"routine {title}: {error}")
+            skipped.append(f"routine {r['title']}: {error}")
+    for a in (x for x in c["agents"] if x["id"] in heartbeats and x["id"] in usable["heartbeats"] and ("heartbeat", x["id"]) not in ledger):
+        if a["id"] not in ids:
+            skipped.append(f"{a['name']}'s heartbeat: import the agent too")
+            continue
+        minutes = max(5, int(a["heartbeat_minutes"]))
+        try:
+            row = routines_mod.create(f"{a['name']}: heartbeat", ids[a["id"]], _heartbeat_text(a), folder="~/lago-work/routines",
+                                      repeat="minutes" if minutes < 60 else "hourly" if minutes < 1440 else "daily",
+                                      every_minutes=minutes if minutes < 60 else None)
+            routines_mod.set_status(row["id"], "paused")
+            _remember("heartbeat", a["id"], row["id"])
+            done.append(f"{a['name']}'s heartbeat, every {minutes if minutes < 60 else 'hour' if minutes < 1440 else 'day'}"
+                        + (" minutes" if minutes < 60 else "") + " (switched off)")
+        except routines_mod.RoutineError as error:
+            skipped.append(f"{a['name']}'s heartbeat: {error}")
 
-    _ensure()
-    now = time.time()
-    with hub.connect() as conn:
-        for slug in tasks:
-            if slug not in allowed["tasks"]:
-                continue
-            task = package["tasks"][slug]
-            title = task["meta"].get("name") or task["meta"].get("title") or slug.replace("-", " ").title()
-            body = task["body"].strip()
-            comments = _comments(task)
-            if comments:
-                body += "\n\nComments in Paperclip:\n" + "\n".join(comments)
-            assignee = str(task["meta"].get("assignee") or "")
-            conn.execute("INSERT INTO imported_tasks (source, ref, title, body, project, agent, priority, created_at, updated_at) "
-                         "VALUES ('paperclip', ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (str(task["ext"].get("identifier") or slug), title, body, project_ids.get(task["project"] or "", ""),
-                          catalog_ids.get(assignee, ""), str(task["ext"].get("priority") or ""), now, now))
-            done.append(f"task {title}")
+    # tasks, the whole tree
+    if tasks in ("open", "all"):
+        brought = _import_tasks(c, tasks, ids, project_ids, goal_ids, ledger)
+        if brought:
+            done.append(f"{brought} task{'s' if brought != 1 else ''} to the backlog")
+
+    # secrets
+    import vault
+    taken = set()
+    for s in (x for x in c["secrets"] if x["id"] in secrets and not x["internal"] and ("secret", x["id"]) not in ledger):
+        name = _slug(s["name"])[:40] or "secret"
+        if (name, _env_name(s)) in taken:  # STRIPE_API_KEY and stripe-api-key are one secret here
+            _remember("secret", s["id"], name)
+            continue
+        taken.add((name, _env_name(s)))
+        try:
+            if secret_values and s.get("value"):
+                vault.save(name, _env_name(s), s["value"])
+                done.append(f"secret {name} ({_env_name(s)}) with its value")
+            else:
+                bound = next((ids[b["target"]] for b in s["bindings"] if b["type"] == "agent" and b["target"] in ids), "")
+                _ask_for_secret(_env_name(s), s["description"], bound)
+                done.append(f"secret {name} ({_env_name(s)}): add its value on the Secrets page")
+            _remember("secret", s["id"], name)
+        except Exception as error:  # the keyring may be locked
+            skipped.append(f"secret {s['name']}: {error}")
+
+    # history
+    if history and ("history", c["id"]) not in ledger:
+        _import_history(c, ids, project_ids)
+        _remember("history", c["id"], c["id"])
+        done.append(f"history: {len(c['costs'])} costs ({_money(sum(x['cents'] for x in c['costs']))}), "
+                    f"{len(c['approvals'])} approvals, {len(c['activity'])} activity lines")
+    for d in (x for x in c["documents"] if x["key"] in documents and ("document", x["key"]) not in ledger):
+        path = _save_document(c, d)
+        _remember("document", d["key"], path)
+        done.append(f"document {d['title']}")
 
     if done:
-        activity.log(activity.actor(), "paperclip.imported", f"{package['company']['name']}: {len(done)} items")
-    shutil.rmtree(_stage_dir(token).parent, ignore_errors=True)
-    return {"done": done, "skipped": skipped}
+        activity.log(activity.actor(), "paperclip.imported", f"{c['name']}: " + "; ".join(done)[:1500])
+    left = [line for line in shown["left_out"]] + [f"skipped {line}" for line in skipped]
+    return {"done": done, "skipped": skipped, "left": left, "hooks": hooks}
 
 
-# ---------------------------------------------------------------- imported tasks
-
-_ready = False
-
-
-def _ensure():
-    global _ready
-    if not _ready:
-        with hub.connect() as conn:
-            conn.executescript(SCHEMA)
-        _ready = True
-
-
-def imported_tasks(status="waiting"):
-    """Tasks brought over from another tool, waiting for you to start them."""
-    _ensure()
-    with hub.connect() as conn:
-        rows = conn.execute("SELECT * FROM imported_tasks WHERE status = ? ORDER BY id", (status,))
-        return [dict(r) for r in rows]
+def _install_skill(skill):
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="paperclip-skill-") as tmp:
+        folder = Path(tmp) / skill["slug"]
+        for rel, data in skill["files"].items():
+            path = (folder / rel).resolve()
+            if folder.resolve() not in path.parents:
+                raise PaperclipError(f"{rel} points outside the skill")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        ghimport._check_tree(folder, ghimport._files_under(folder))
+        return skill_sources.install_from(folder, SOURCE, "", f"skills/{skill['slug']}")
 
 
-def set_task_status(task_id, status):
-    if status not in ("waiting", "started", "dismissed"):
-        raise PaperclipError(f"Unknown status {status!r}")
-    _ensure()
-    with hub.connect() as conn:
-        changed = conn.execute("UPDATE imported_tasks SET status = ?, updated_at = ? WHERE id = ?",
-                               (status, time.time(), int(task_id))).rowcount
-    if not changed:
-        raise PaperclipError(f"There's no imported task #{task_id}")
+def _ask_for_secret(env, description, agent_id):
+    """A secret whose value didn't come over: you're asked for it (secret_requests.py), on
+    behalf of the agent it belonged to."""
+    import secret_requests
+    secret_requests.request(agent_id or SOURCE, env, f"Brought over from Paperclip{': ' + description if description else ''}. Paste its value.")
+
+
+def _import_tasks(c, which, ids, project_ids, goal_ids, ledger):
+    """Every task (or the open ones, with their parents for context) into the backlog."""
+    by_id = {i["id"]: i for i in c["issues"]}
+    keep = {i["id"] for i in c["issues"] if which == "all" or i["status"] in OPEN_STATUSES}
+    for item_id in list(keep):
+        parent = by_id[item_id].get("parent")
+        while parent in by_id and parent not in keep:
+            keep.add(parent)
+            parent = by_id[parent].get("parent")
+    names = {a["id"]: a["name"] for a in c["agents"]}
+    backlog_ids = {i["id"]: int(ledger[("task", i["id"])]) for i in c["issues"] if ("task", i["id"]) in ledger}
+    added = 0
+    for i in c["issues"]:
+        if i["id"] not in keep or i["id"] in backlog_ids or _blocked("task", i["description"]):
+            continue
+        body = i["description"]
+        if i["attachments"]:
+            saved = [_save_attachment(c, i, f) for f in i["attachments"]]
+            body += "\n\nAttachments:\n" + "\n".join(f"- {p}" for p in saved if p)
+        status = i["status"] if i["status"] in backlog.STATES else ("done" if i.get("finished_at") else "todo")
+        backlog_ids[i["id"]] = backlog.add(
+            SOURCE, i["id"], i["title"], identifier=i["identifier"], company=c["name"], body=body, status=status,
+            priority=i["priority"], project=project_ids.get(i.get("project") or "", ""), agent=ids.get(i.get("assignee") or "", ""),
+            goal_id=goal_ids.get(i.get("goal")), labels=i["labels"] + ([f"was {names[i['assignee']]}'s"] if i.get("assignee") in names and i["assignee"] not in ids else []),
+            comments=i["comments"], documents=i["documents"], created_at=i.get("created_at") or time.time(), finished_at=i.get("finished_at"))
+        _remember("task", i["id"], backlog_ids[i["id"]])
+        added += 1
+    for i in c["issues"]:
+        if i["id"] in backlog_ids and (i.get("parent") in backlog_ids or i["blocked_by"]):
+            backlog.link(backlog_ids[i["id"]], backlog_ids.get(i.get("parent")), [backlog_ids[b] for b in i["blocked_by"] if b in backlog_ids])
+    return added
+
+
+def _company_dir(c):
+    return DOCS_DIR / (_slug(c["name"]) or "company")
+
+
+def _save_attachment(c, issue, item):
+    if not item.get("path"):
+        return item.get("name")
+    target = _company_dir(c) / "attachments" / (issue["identifier"] or _slug(issue["title"]))
+    target.mkdir(parents=True, exist_ok=True)
+    name = Path(str(item["name"])).name or Path(item["path"]).name
+    shutil.copyfile(item["path"], target / name)
+    return str((target / name)).replace(str(Path.home()), "~", 1)
+
+
+def _save_document(c, document):
+    folder = _company_dir(c) / "documents"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{_slug(document['title']) or 'document'}.md"
+    path.write_text(document["body"], encoding="utf-8")
+    return str(path)
+
+
+APPROVAL_WORDS = {"hire_agent": "hiring", "approve_ceo_strategy": "the CEO's strategy"}
+
+
+def _import_history(c, ids, project_ids):
+    import spending
+    names = {a["id"]: a["name"] for a in c["agents"]}
+    spending.add_imported(SOURCE, [{"ref": x["ref"], "agent_id": ids.get(x.get("agent")) or names.get(x.get("agent")) or "paperclip",
+                                    "project": project_ids.get(x.get("project") or "") or f"{c['name']} (Paperclip)", "model": x["model"],
+                                    "cost": x["cents"] / 100, "at": x["at"] or time.time()} for x in c["costs"]])
+    for a in c["approvals"]:
+        what = APPROVAL_WORDS.get(a["type"], a["type"].replace("_", " "))
+        text = f"[{c['name']}] Approval for {what}: {a['status']}" + (f" ({a['note']})" if a["note"] else "")
+        plan = a["payload"].get("plan") or a["payload"].get("name") if isinstance(a["payload"], dict) else ""
+        if plan:
+            text += f" · {plan}"
+        for comment in a["comments"]:
+            text += f"\n- {comment['by']}: {comment['text']}"
+        activity.log(a["by"], "paperclip.approval", text, at=a.get("decided_at") or a.get("at"))
+    for line in c["activity"]:
+        details = line["details"]
+        subject = details.get("title") or details.get("name") or details.get("identifier") or "" if isinstance(details, dict) else ""
+        activity.log(line["actor"], f"paperclip.{line['action']}"[:60],
+                     f"[{c['name']}] {line['action'].replace('.', ' ').replace('_', ' ')}" + (f": {subject}" if subject else ""), at=line["at"])

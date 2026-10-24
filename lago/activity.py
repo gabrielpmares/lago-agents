@@ -34,8 +34,9 @@ def actor():
     return who["login"] if who else os.environ.get("LAGO_AGENT_ID") or "you"
 
 
-def log(actor, kind, text, target=None, workspace=None, project=None):
-    """Add a line. Never raises: the activity log must not break what it records."""
+def log(actor, kind, text, target=None, workspace=None, project=None, at=None):
+    """Add a line (`at`: when it happened, for history brought over from elsewhere). Never
+    raises: the activity log must not break what it records."""
     if actor in (None, "you") and person():
         actor = person()["login"]
     try:
@@ -43,7 +44,7 @@ def log(actor, kind, text, target=None, workspace=None, project=None):
             conn.execute("INSERT INTO activity (actor, kind, text, target, workspace, project, "
                          "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                          (actor or "system", kind, text[:2000], target, workspace, project,
-                          time.time()))
+                          at or time.time()))
     except Exception:
         pass
 

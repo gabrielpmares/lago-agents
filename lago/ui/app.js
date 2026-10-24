@@ -1231,6 +1231,55 @@ function agentLink(id) {
   return id ? h("a", { href: `#agent/${id}` }, agentName(id)) : h("span", {}, "You");
 }
 
+/* The backlog (backlog.py): tasks brought over from Paperclip, as their tree. Open ones start as
+   a Lago task, filled in with what they knew; finished ones are history. */
+function backlogSection(data, reload) {
+  const open = data.items.filter((i) => i.open || i.children);
+  const finished = data.items.filter((i) => !i.open);
+  const startItem = async (item) => {
+    const full = await bridge.call("backlog_item", { item_id: item.id });
+    newTaskDialog({ text: full.start_text, project: item.project, agent: item.agent,
+      onStarted: (href) => bridge.call("backlog_status", { item_id: item.id, status: "started", workspace: Number((href || "").match(/#work\/(\d+)/)?.[1]) || null }).then(reload) });
+  };
+  const line = (item) => h("li", { class: `backlog-row${item.open ? "" : " closed"}`, style: `--depth:${item.depth}` },
+    h("button", { type: "button", class: "backlog-main", onclick: () => backlogDialog(item.id, reload, startItem) },
+      h("span", { class: `map-dot s-${item.open ? (item.status === "blocked" ? "needs_you" : item.status === "in_progress" || item.status === "in_review" ? "working" : "idle") : "stopped"}` }),
+      h("span", { class: "backlog-title" }, item.title),
+      h("span", { class: "faint backlog-meta" }, [item.identifier, item.priority, item.project ? projectName(item.project) : "", (BACKLOG_LABELS[item.status] || item.status)].filter(Boolean).join(" · ")),
+      item.labels.length ? h("span", { class: "backlog-labels" }, item.labels.map((l) => h("span", { class: "pill" }, l))) : null),
+    item.open ? h("button", { type: "button", class: "btn small", onclick: () => startItem(item) }, icon("play"), "Start") : null);
+  return h("section", { class: "backlog" },
+    h("h2", { class: "label" }, icon("stack"), ` Backlog (${data.counts.open})`),
+    open.length ? h("ul", { class: "backlog-list", role: "list" }, open.map(line)) : h("p", { class: "faint" }, "Nothing waiting."),
+    finished.length ? h("details", { class: "fold" }, h("summary", {}, icon("clock-counter-clockwise"), `Finished before (${finished.length})`),
+      h("ul", { class: "backlog-list", role: "list" }, finished.map((i) => line({ ...i, depth: 0 })))) : null);
+}
+const BACKLOG_LABELS = { backlog: "Backlog", todo: "To do", in_progress: "Was in progress", in_review: "Was in review", blocked: "Blocked",
+  done: "Done", cancelled: "Cancelled", started: "Started here", dismissed: "Put away" };
+
+async function backlogDialog(itemId, reload, startItem) {
+  const item = await bridge.call("backlog_item", { item_id: itemId });
+  const docs = item.documents.map((d) => {
+    const view = h("pre", { class: "backlog-doc" }, d.body);
+    const revisions = d.revisions || [];
+    return h("section", {}, h("h3", {}, icon("file-text"), d.title,
+        revisions.length > 1 ? h("select", { class: "select", "aria-label": "Revision", onchange: (e) => { view.textContent = revisions[Number(e.target.value)].body; } },
+          revisions.map((r, i) => h("option", { value: i, selected: i === revisions.length - 1 }, `Revision ${r.number}`))) : null), view);
+  });
+  openDialog((close) => h("div", { class: "backlog-dialog" },
+    h("h2", {}, item.title), h("p", { class: "faint" }, [item.identifier, item.company, BACKLOG_LABELS[item.status] || item.status, item.priority].filter(Boolean).join(" · ")),
+    item.body ? h("p", { class: "prewrap" }, item.body) : null,
+    item.labels.length ? h("p", {}, item.labels.map((l) => h("span", { class: "pill" }, l))) : null,
+    item.comments.length ? h("section", {}, h("h3", {}, icon("chat-circle"), `Comments (${item.comments.length})`),
+      h("ul", { class: "import-left" }, item.comments.map((c) => h("li", {}, h("b", {}, c.by), ` ${c.text}`, c.at ? h("span", { class: "faint" }, ` · ${ago(c.at)}`) : null)))) : null,
+    docs,
+    h("div", { class: "dialog-actions" },
+      item.open ? h("button", { type: "button", class: "btn ghost", onclick: (e) => runAction(e.currentTarget, () => bridge.call("backlog_status", { item_id: item.id, status: "dismissed" })).then(() => { close(); reload(); }) }, "Put Away") : null,
+      h("span", { style: "flex:1" }),
+      h("button", { type: "button", class: "btn", onclick: () => close() }, "Close"),
+      item.open ? h("button", { type: "button", class: "btn primary", onclick: () => { close(); startItem(item); } }, icon("play"), "Start") : null)), { wide: true });
+}
+
 views.tasks = (root, alive) => {
   let filter = "open";
   let mine = null;
@@ -1261,27 +1310,18 @@ views.tasks = (root, alive) => {
       h("div", { class: "fold-body" }, taskList((handoffs || []).filter((t) => filter === "all" || (filter === "open") === ["queued", "blocked", "sent", "working"].includes(t.status)))));
     handoffFold.open = wasOpen;
   };
-  const imported = h("div");
-  let importedKey = "";
-  const renderImported = (rows) => {
-    const key = JSON.stringify(rows);
-    if (key === importedKey) return;
-    importedKey = key;
-    const start = (t) => newTaskDialog({ text: `${t.title}\n\n${t.body}`.trim(), project: t.project, agent: t.agent,
-      onStarted: () => bridge.call("imported_task_status", { task_id: t.id, status: "started" }).then(load) });
-    fill(imported, rows.length ? h("section", { class: "drafts" }, h("h2", { class: "label" }, icon("download-simple"), ` Waiting from Paperclip (${rows.length})`),
-      rows.map((t) => h("article", { class: "draft-row" },
-        h("div", { class: "draft-row-top" }, h("strong", {}, t.title),
-          h("span", { class: "faint", style: "font-size:12px" }, [t.ref, t.project ? projectName(t.project) : "", t.priority].filter(Boolean).join(" · ")),
-          h("span", { style: "flex:1" }),
-          h("button", { type: "button", class: "btn small primary", onclick: () => start(t) }, icon("play"), "Start"),
-          h("button", { type: "button", class: "btn small ghost", onclick: (e) => runAction(e.currentTarget, () => bridge.call("imported_task_status", { task_id: t.id, status: "dismissed" })).then(load) }, "Dismiss")),
-        t.body ? h("p", { class: "faint imported-body" }, t.body) : null))) : null);
+  const backlogSlot = h("div");
+  let backlogKey = "";
+  const renderBacklog = (data) => {
+    const key = JSON.stringify(data);
+    if (key === backlogKey) return;
+    backlogKey = key;
+    fill(backlogSlot, data.counts.open || data.counts.done ? backlogSection(data, load) : null);
   };
   const load = async () => {
     try {
       [mine, handoffs] = await Promise.all([bridge.call("my_tasks"), bridge.call("tasks")]);
-      if (!state.web || state.me?.owner || state.me?.admin) bridge.call("imported_tasks").then((rows) => { if (alive()) renderImported(rows); }).catch(() => {});
+      if (!state.web || state.me?.owner || state.me?.admin) bridge.call("backlog", { which: "all" }).then((data) => { if (alive()) renderBacklog(data); }).catch(() => {});
       if (alive()) render();
     } catch (error) {
       if (alive()) body.replaceChildren(errorBox(error, load));
@@ -1289,7 +1329,7 @@ views.tasks = (root, alive) => {
   };
   root.append(pageHead("Tasks", "Everything you asked for, and where it stands."),
     h("div", { class: "controls-line" }, h("button", { class: "btn primary", onclick: () => newTaskDialog() }, icon("plus"), "New Task"), seg,
-      h("button", { class: "btn ghost", title: "Mark every task as seen", onclick: (e) => runAction(e.currentTarget, () => bridge.call("mark_read", { items: (mine || []).filter((t) => t.unread).map((t) => t.item) })).then(load) }, icon("checks"), "Mark All Read")), imported, body, handoffFold);
+      h("button", { class: "btn ghost", title: "Mark every task as seen", onclick: (e) => runAction(e.currentTarget, () => bridge.call("mark_read", { items: (mine || []).filter((t) => t.unread).map((t) => t.item) })).then(load) }, icon("checks"), "Mark All Read")), backlogSlot, body, handoffFold);
   const timer = setInterval(() => { if (document.visibilityState === "visible" && !byId("dialog").open) load(); }, 3000);
   viewCleanup = () => clearInterval(timer);
   load();
@@ -2981,22 +3021,25 @@ async function explainDialog(c, onImport) {
 /* Lago's own list of agents on GitHub (ghcatalog.py): open-source licensed, gaining stars
    lately, by topic, in plain words. Importing goes through the GitHub Agent Builder's checks
    and a draft you approve on the Agents tab. */
-/* Bringing a setup over from Paperclip (paperclip_import.py): choose the company package it
-   exported, see what's in it and what can't come over, tick what to import. */
+/* Bringing everything over from Paperclip (paperclip_import.py): found on this computer (its
+   database backup and the files beside it), or from a backup file, an exported zip or folder, or
+   a GitHub package. A preview per company shows what comes over and what can't; you tick what
+   to bring, and Lago can be asked to look at what's left. */
 views.import = (root, alive) => {
   const body = h("div", { class: "import-flow" });
-  root.append(pageHead("Agents", "Bring the agents, skills, routines, projects and open tasks you built in Paperclip."), agentsTabs("import"), body);
-  const zipInput = h("input", { type: "file", accept: ".zip,application/zip", hidden: true, onchange: () => { const file = zipInput.files[0]; zipInput.value = ""; if (file) readZip(file); } });
-  const folder = h("input", { class: "input mono", placeholder: "~/acme-export", spellcheck: "false", "aria-label": "Exported folder" });
-  const repo = h("input", { class: "input mono", placeholder: "owner/repo", spellcheck: "false", "aria-label": "GitHub repository" });
+  root.append(pageHead("Agents", "Bring everything you built in Paperclip: agents, skills, goals, projects, routines, tasks, secrets and history."),
+    agentsTabs("import"), body);
+  const fileInput = h("input", { type: "file", accept: ".zip,.gz,.sql,application/zip,application/gzip", hidden: true,
+    onchange: () => { const file = fileInput.files[0]; fileInput.value = ""; if (file) readFile(file); } });
   const status = h("p", { class: "faint", "aria-live": "polite" });
+  const when = (at) => at ? `${ago(at)} (${new Date(at * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })})` : "never";
 
   const stage = async (button, params) => {
     let token = null;
-    const ok = await runAction(button, async () => { token = (await bridge.call("paperclip_stage", params)).token; return { ok: true, message: "Package read: tick what to import." }; });
+    const ok = await runAction(button, async () => { token = (await bridge.call("paperclip_stage", params)).token; return { ok: true, message: "Read. Tick what to bring over." }; });
     if (ok && token && alive()) showPreview(token);
   };
-  const readZip = (file) => {
+  const readFile = (file) => {
     const reader = new FileReader();
     status.textContent = `Reading ${file.name}…`;
     reader.onload = () => { status.textContent = ""; stage(null, { zip: reader.result }); };
@@ -3004,89 +3047,157 @@ views.import = (root, alive) => {
     reader.readAsDataURL(file);
   };
 
-  const choose = () => fill(body,
-    h("section", { class: "import-card" },
-      h("h2", {}, icon("export"), "1. Export your company from Paperclip"),
-      h("p", {}, "In Paperclip, open your company's settings, then ", h("strong", {}, "Export"), ". Include agents, skills, projects and tasks, and download the zip."),
-      h("p", { class: "faint" }, "From a terminal instead: ", h("code", {}, "paperclipai company export <company-id> --out ./my-company --include company,agents,projects,tasks,skills --expand-referenced-skills"))),
-    h("section", { class: "import-card" },
-      h("h2", {}, icon("download-simple"), "2. Bring it here"),
-      h("div", { class: "import-sources" },
-        h("div", {}, h("button", { type: "button", class: "btn primary", onclick: () => zipInput.click() }, icon("file-zip"), "Choose the Zip…"), zipInput),
-        h("form", { class: "import-line", onsubmit: (e) => { e.preventDefault(); stage(e.submitter, { folder: folder.value }); } },
-          h("label", {}, "Or the exported folder"), folder, h("button", { type: "submit", class: "btn" }, "Open")),
-        h("form", { class: "import-line", onsubmit: (e) => { e.preventDefault(); stage(e.submitter, { github: repo.value }); } },
-          h("label", {}, "Or a GitHub repository"), repo, h("button", { type: "submit", class: "btn" }, "Fetch"))),
-      status,
-      h("p", { class: "faint" }, "Nothing is imported until you've seen what's in it and ticked what you want.")));
+  async function choose(extra = "") {
+    body.replaceChildren(skeleton(2));
+    let found = [];
+    try { found = (await bridge.call("paperclip_find", { extra })).instances; } catch { /* shown as not found */ }
+    if (!alive()) return;
+    const folder = h("input", { class: "input mono", placeholder: "~/paperclip-data", spellcheck: "false", "aria-label": "Paperclip data folder", value: extra });
+    const pathInput = h("input", { class: "input mono", placeholder: "~/my-company-export", spellcheck: "false", "aria-label": "Exported folder" });
+    const repo = h("input", { class: "input mono", placeholder: "owner/repo", spellcheck: "false", "aria-label": "GitHub repository" });
+    const instanceCard = (i) => {
+      const newest = i.backups[0];
+      return h("article", { class: "import-instance" },
+        h("div", { class: "import-text" }, h("strong", {}, i.name === "default" ? "Paperclip" : `Paperclip (${i.name})`),
+          h("small", { class: "faint mono" }, i.path.replace(/^\/home\/[^/]+/, "~")),
+          h("small", {}, newest ? `Last backup ${when(newest.at)}` : "No backup yet", i.running ? " · running" : "")),
+        h("div", { class: "toolbar" },
+          h("button", { type: "button", class: "btn", title: "Paperclip backs itself up every hour. A fresh backup brings today's last changes.",
+            onclick: (e) => runAction(e.currentTarget, () => bridge.call("paperclip_fresh_backup", { instance: i.path })).then(() => choose(extra)) }, icon("arrow-clockwise"), "Fresh Backup"),
+          newest ? h("button", { type: "button", class: "btn primary", onclick: (e) => stage(e.currentTarget, { instance: i.path }) }, icon("download-simple"), "Bring It Over") : null));
+    };
+    fill(body,
+      h("section", { class: "import-card" },
+        h("h2", {}, icon("magnifying-glass"), found.length ? "Paperclip on this computer" : "Looking for Paperclip"),
+        found.length ? found.map(instanceCard)
+          : h("p", {}, "Paperclip isn't in ", h("code", {}, "~/.paperclip"), " on this computer. Running it in Docker, or somewhere else? Give its data folder:"),
+        h("form", { class: "import-line", onsubmit: (e) => { e.preventDefault(); choose(folder.value.trim()); } },
+          h("label", {}, found.length ? "Another Paperclip folder" : "Paperclip's data folder"), folder, h("button", { type: "submit", class: "btn" }, "Look")),
+        h("p", { class: "faint" }, "Lago reads Paperclip's own backup and the files beside it. Paperclip isn't changed, and nothing is imported until you've seen it all and ticked what you want.")),
+      h("details", { class: "fold import-other" }, h("summary", {}, icon("dots-three"), "Other ways: a file, an export, a GitHub package"),
+        h("div", { class: "import-sources" },
+          h("div", { class: "import-line" }, h("label", {}, "A backup or exported zip"),
+            h("span", { class: "faint" }, "Paperclip's Export page gives a zip; its backups are .sql.gz files."),
+            h("button", { type: "button", class: "btn", onclick: () => fileInput.click() }, icon("file-zip"), "Choose a File…"), fileInput),
+          h("form", { class: "import-line", onsubmit: (e) => { e.preventDefault(); stage(e.submitter, { folder: pathInput.value }); } },
+            h("label", {}, "An exported folder"), pathInput, h("button", { type: "submit", class: "btn" }, "Open")),
+          h("form", { class: "import-line", onsubmit: (e) => { e.preventDefault(); stage(e.submitter, { github: repo.value }); } },
+            h("label", {}, "A GitHub repository"), repo, h("button", { type: "submit", class: "btn" }, "Fetch"))),
+        status));
+  }
 
   function showPreview(token) {
     body.replaceChildren(skeleton(4));
-    bridge.call("paperclip_preview", { token }).then((p) => { if (alive()) renderPreview(token, p); }, (error) => alive() && body.replaceChildren(errorBox(error, choose)));
+    bridge.call("paperclip_preview", { token }).then((p) => { if (alive()) renderPreview(token, p, p.companies[0]?.id); },
+      (error) => alive() && body.replaceChildren(errorBox(error, () => choose())));
   }
 
-  function renderPreview(token, p) {
-    const picked = { agents: new Set(), skills: new Set(), routines: new Set(), tasks: new Set(), projects: new Set() };
+  function renderPreview(token, p, companyId) {
+    const c = p.companies.find((x) => x.id === companyId) || p.companies[0];
+    if (!c) { fill(body, h("section", { class: "import-card" }, h("p", {}, "There's no company in it."), h("button", { type: "button", class: "btn", onclick: () => choose() }, "Back"))); return; }
+    const picked = { agents: new Set(), skills: new Set(), goals: new Set(), routines: new Set(), heartbeats: new Set(), secrets: new Set(), documents: new Set(), projects: new Set() };
     const folders = {};
+    let tasks = c.tasks.open ? "open" : "none";
+    let secretValues = false;
+    let history = !c.history.done && (c.history.costs + c.history.approvals + c.history.activity) > 0;
     const box = (kind, item) => {
-      const usable = !item.blocked;
-      if (usable) picked[kind].add(item.slug);
-      return h("input", { type: "checkbox", checked: usable, disabled: !usable, "aria-label": `Import ${item.name}`,
-        onchange: (e) => { e.target.checked ? picked[kind].add(item.slug) : picked[kind].delete(item.slug); } });
+      const usable = !item.blocked && !item.done;
+      if (usable) picked[kind].add(item.id);
+      return h("input", { type: "checkbox", checked: usable, disabled: !usable, "aria-label": `Bring ${item.name}`,
+        onchange: (e) => { e.target.checked ? picked[kind].add(item.id) : picked[kind].delete(item.id); } });
     };
-    const row = (kind, item, extra) => h("label", { class: `import-item${item.blocked ? " blocked" : ""}` }, box(kind, item),
+    const row = (kind, item, extra) => h("label", { class: `import-item${item.blocked || item.done ? " blocked" : ""}` }, box(kind, item),
       h("span", { class: "import-text" }, h("strong", {}, item.name),
         item.note ? h("small", { class: "faint" }, item.note) : null,
+        item.done ? h("small", { class: "faint" }, icon("check"), " Already brought over") : null,
         item.blocked ? h("small", { class: "import-why" }, icon("prohibit"), item.blocked) : null,
-        item.exists ? h("small", { class: "faint" }, "You already have one with this name: it comes in under a new one.") : null),
+        item.exists && !item.done ? h("small", { class: "faint" }, "You already have one with this name: it comes in under a new one.") : null),
       extra || null);
-    const section = (kind, title, ic, items, extra) => items.length ? h("section", { class: "import-group" },
+    const group = (kind, title, ic, items, extra) => items.length ? h("section", { class: "import-group" },
       h("h3", {}, icon(ic), `${title} (${items.length})`), items.map((item) => row(kind, item, extra?.(item)))) : null;
     const projectFolder = (item) => {
-      folders[item.slug] = item.folder;
+      folders[item.id] = item.folder;
       return h("span", { class: "import-folder", onclick: (e) => e.preventDefault() },
-        h("input", { class: "input mono", value: item.folder, "aria-label": `Folder for ${item.name}`, oninput: (e) => { folders[item.slug] = e.target.value; } }),
-        h("small", { class: "faint" }, item.repo ? `Cloned from ${item.repo} if the folder doesn't exist yet.` : "Made empty if it doesn't exist yet."));
+        h("input", { class: "input mono", value: item.folder, "aria-label": `Folder for ${item.name}`, oninput: (e) => { folders[item.id] = e.target.value; } }),
+        h("small", { class: "faint" }, item.found ? "The folder Paperclip used." : item.repo ? `Cloned from ${item.repo} if it doesn't exist yet.` : "Made empty if it doesn't exist yet."));
     };
-    const total = ["agents", "skills", "projects", "routines", "tasks"].reduce((n, k) => n + p[k].length, 0);
+    const choice = (name, value, label, current, set) => h("label", { class: "import-choice" },
+      h("input", { type: "radio", name, value, checked: value === current, onchange: () => set(value) }), label);
+    const tasksSection = (c.tasks.open + c.tasks.finished) ? h("section", { class: "import-group" },
+      h("h3", {}, icon("list-checks"), `Tasks (${c.tasks.open} open, ${c.tasks.finished} finished)`),
+      h("div", { class: "import-item static" }, h("span", { class: "import-text" },
+        h("span", { class: "import-choices" },
+          choice(`tasks-${c.id}`, "open", "Open ones", tasks, (v) => { tasks = v; }),
+          choice(`tasks-${c.id}`, "all", "All, finished ones as history", tasks, (v) => { tasks = v; }),
+          choice(`tasks-${c.id}`, "none", "None", tasks, (v) => { tasks = v; })),
+        h("small", { class: "faint" }, `To the backlog on the Tasks page, as a tree, with their ${c.tasks.comments} comments and ${c.tasks.documents} documents. Start one when you're ready.`),
+        c.tasks.sample.length ? h("small", { class: "faint" }, "Such as: " + c.tasks.sample.join(" · ")) : null,
+        c.tasks.already ? h("small", { class: "faint" }, icon("check"), ` ${c.tasks.already} already brought over`) : null,
+        c.tasks.blocked.length ? h("small", { class: "import-why" }, icon("prohibit"), `Left out, their text tries to steer an agent: ${c.tasks.blocked.join(", ")}`) : null))) : null;
+    const anyValues = c.secrets.some((s) => s.has_value && !s.done);
+    const secretsSection = c.secrets.length ? h("section", { class: "import-group" },
+      h("h3", {}, icon("key"), `Secrets (${c.secrets.length})`), c.secrets.map((s) => row("secrets", s)),
+      anyValues ? h("label", { class: "import-item" }, h("input", { type: "checkbox", onchange: (e) => { secretValues = e.target.checked; } }),
+        h("span", { class: "import-text" }, h("strong", {}, "Bring their values too"),
+          h("small", { class: "faint" }, "Into your keyring, where Lago keeps secrets. Without this, you're asked for each value."))) : null) : null;
+    const h_ = c.history;
+    const historySection = (h_.costs + h_.approvals + h_.activity) ? h("section", { class: "import-group" },
+      h("h3", {}, icon("clock-counter-clockwise"), "History"),
+      h("label", { class: `import-item${h_.done ? " blocked" : ""}` },
+        h("input", { type: "checkbox", checked: history, disabled: h_.done, onchange: (e) => { history = e.target.checked; } }),
+        h("span", { class: "import-text" }, h("strong", {}, `${h_.spent} spent, ${h_.approvals} approvals, ${h_.activity} things that happened`),
+          h("small", { class: "faint" }, h_.done ? "Already brought over." : "Costs to Spending (never counted against your budgets); approvals and the activity log to History, with their dates.")))) : null;
     fill(body,
+      p.companies.length > 1 ? h("nav", { class: "segmented import-companies", "aria-label": "Companies" }, p.companies.map((x) =>
+        h("button", { type: "button", "aria-pressed": String(x.id === c.id), class: x.id === c.id ? "on" : "", onclick: () => renderPreview(token, p, x.id) }, x.name))) : null,
       h("section", { class: "import-card" },
-        h("h2", {}, icon("buildings"), p.company.name, h("span", { class: "faint" }, ` · ${total} things found`)),
-        p.company.description ? h("p", { class: "faint" }, p.company.description) : null,
-        section("agents", "Agents", "robot", p.agents),
-        section("skills", "Skills", "lightning", p.skills),
-        section("projects", "Projects", "folders", p.projects, projectFolder),
-        section("routines", "Routines", "repeat", p.routines),
-        section("tasks", "Open tasks", "list-checks", p.tasks),
-        h("details", { class: "fold" }, h("summary", {}, icon("info"), "What doesn't come over"),
-          h("ul", { class: "import-left" }, p.left_out.map((line) => h("li", {}, line)))),
-        h("p", { class: "faint" }, "Routines arrive switched off. Open tasks wait on the Tasks page until you start them."),
+        h("h2", {}, icon("buildings"), c.name, p.backup_at ? h("span", { class: "faint" }, ` · as of ${when(p.backup_at)}`) : null),
+        c.description ? h("p", { class: "faint" }, c.description) : null,
+        group("agents", "Agents", "robot", c.agents),
+        group("heartbeats", "Heartbeats", "heartbeat", c.heartbeats),
+        group("skills", "Skills", "lightning", c.skills),
+        group("goals", "Goals", "flag", c.goals),
+        group("projects", "Projects", "folders", c.projects, projectFolder),
+        group("routines", "Routines", "repeat", c.routines),
+        tasksSection, secretsSection, historySection,
+        group("documents", "Documents", "file-text", c.documents),
+        h("details", { class: "fold" }, h("summary", {}, icon("info"), `What doesn't come over (${c.left_out.length})`),
+          h("ul", { class: "import-left" }, c.left_out.map((line) => h("li", {}, line)))),
+        h("p", { class: "faint" }, "Routines and heartbeats arrive switched off. Everything you bring can be brought again later: only what's new comes over."),
         h("div", { class: "toolbar" },
-          h("button", { type: "button", class: "btn ghost", onclick: choose }, "Choose Another"),
+          h("button", { type: "button", class: "btn ghost", onclick: () => choose() }, "Back"),
           h("span", { style: "flex:1" }),
           h("button", { type: "button", class: "btn primary", onclick: async (e) => {
             let result = null;
-            const projects = Object.fromEntries([...picked.projects].map((slug) => [slug, folders[slug]]));
+            const projects = Object.fromEntries([...picked.projects].map((id) => [id, folders[id]]));
             const ok = await runAction(e.currentTarget, async () => {
-              result = await bridge.call("paperclip_apply", { token, agents: [...picked.agents], skills: [...picked.skills], projects,
-                routines: [...picked.routines], tasks: [...picked.tasks] });
-              return { ok: true, message: result.done.length ? `Imported ${result.done.length} from Paperclip.` : "Nothing was imported." };
+              result = await bridge.call("paperclip_apply", { token, company: c.id, agents: [...picked.agents], skills: [...picked.skills],
+                goals: [...picked.goals], projects, routines: [...picked.routines], heartbeats: [...picked.heartbeats], tasks,
+                secrets: [...picked.secrets], secret_values: secretValues, history, documents: [...picked.documents] });
+              return { ok: true, message: result.done.length ? `Brought ${result.done.length} things over from ${c.name}.` : "Nothing new to bring." };
             });
-            if (ok && result && alive()) { await refreshCatalog(); state.config = (await bridge.call("init")).config; renderDone(result); }
-          } }, icon("download-simple"), "Import"))));
+            if (ok && result && alive()) { await refreshCatalog(); state.config = (await bridge.call("init")).config; renderDone(c, result); }
+          } }, icon("download-simple"), `Bring ${c.name} Over`))));
   }
 
-  function renderDone(result) {
+  function renderDone(c, result) {
+    const ask = () => newTaskDialog({ text: `I just brought my Paperclip company "${c.name}" into Lago Agents. Look at what didn't come over and help me rebuild it here: `
+      + "for each, say what it did in Paperclip and set up the closest thing in Lago (a skill, an agent, a routine, a connector), or tell me it isn't needed. "
+      + "Paperclip's data is in ~/.paperclip (or the folder I imported from).\n\nWhat didn't come over:\n" + result.left.map((l) => `- ${l}`).join("\n") });
     fill(body, h("section", { class: "import-card" },
-      h("h2", {}, icon("check-circle", "ph-fill"), result.done.length ? `Imported ${result.done.length} thing${result.done.length === 1 ? "" : "s"}` : "Nothing was imported"),
+      h("h2", {}, icon("check-circle", "ph-fill"), result.done.length ? `Brought ${c.name} over` : "Nothing new to bring"),
       result.done.length ? h("ul", { class: "import-left" }, result.done.map((line) => h("li", {}, line))) : null,
-      result.skipped.length ? [h("h3", {}, "Skipped"), h("ul", { class: "import-left" }, result.skipped.map((line) => h("li", {}, line)))] : null,
+      result.skipped.length ? [h("h3", {}, "Couldn't bring"), h("ul", { class: "import-left" }, result.skipped.map((line) => h("li", {}, line)))] : null,
+      result.hooks.length ? h("p", { class: "faint" }, `New webhook links for ${result.hooks.join(", ")}: copy them from Routines and update whatever called Paperclip.`) : null,
       h("div", { class: "toolbar" },
         h("a", { class: "btn", href: "#swarm" }, icon("users-three"), "Agents"),
-        h("a", { class: "btn", href: "#routines" }, icon("repeat"), "Routines"),
         h("a", { class: "btn", href: "#tasks" }, icon("list-checks"), "Tasks"),
+        h("a", { class: "btn", href: "#routines" }, icon("repeat"), "Routines"),
         h("span", { style: "flex:1" }),
-        h("button", { type: "button", class: "btn ghost", onclick: choose }, "Import Another"))));
+        h("button", { type: "button", class: "btn ghost", onclick: () => choose() }, "Bring More")),
+      h("div", { class: "import-ask" }, icon("sparkle"),
+        h("span", {}, "Some things have no place in Lago yet. Lago can look at them and set up the closest thing here."),
+        h("button", { type: "button", class: "btn primary", onclick: ask }, "Ask Lago to Look"))));
   }
   choose();
 };
@@ -6970,7 +7081,7 @@ function newTaskDialog(preset = {}) {
         href = res.href;
         return res;
       });
-      if (ok) { close(); preset.onStarted?.(); if (href) location.hash = href.slice(1); pollLive(); }
+      if (ok) { close(); preset.onStarted?.(href); if (href) location.hash = href.slice(1); pollLive(); }
     } },
     h("h2", {}, "New Task"), text,
     h("div", { class: "new-task-row" }, h("label", {}, icon("folder"), project), h("label", {}, icon("users-three"), agent)),

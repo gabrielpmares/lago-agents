@@ -32,7 +32,9 @@ import documents
 import evals
 import features
 import ghcatalog
+import backlog
 import paperclip_import
+import paperclip_local
 import github
 import goals
 import holds
@@ -121,7 +123,7 @@ def _call(work):
             statuscards.CardError, documents.DocumentError, tickets.TicketError,
             pull_requests.PullRequestError, vault.VaultError, company.AccessError,
             changes.ChangesError, toolrules.RuleError, secret_requests.SecretRequestError,
-            connectors.ConnectorError) as error:
+            connectors.ConnectorError, backlog.BacklogError) as error:
         raise ApiError(str(error)) from error
     except github.GitHubError as error:
         raise ApiError(f"GitHub: {error}") from error
@@ -1167,29 +1169,47 @@ class Api:
     def decide_skill(self, draft_id, approve):
         return {"ok": True, "message": _call(lambda: skill_sources.decide(draft_id, bool(approve)))}
 
-    # --- bringing a setup over from Paperclip (paperclip_import.py)
+    # --- bringing everything over from Paperclip (paperclip_import.py, paperclip_local.py)
 
-    def paperclip_stage(self, zip=None, folder=None, github=None):
-        """Unpack a Paperclip company package: the exported zip (a data URL), a folder from
-        `paperclipai company export`, or a GitHub repository. Returns {"token"}."""
-        return {"token": _call(lambda: paperclip_import.stage(data_url=zip, folder=folder, github=github))}
+    def paperclip_find(self, extra=""):
+        """Paperclip installs on this computer (and in `extra`, a folder you point at), with
+        their backups."""
+        return {"instances": paperclip_local.instances([extra] if extra else [])}
+
+    def paperclip_fresh_backup(self, instance):
+        """Have Paperclip back itself up now, so the import has today's last changes."""
+        try:
+            path = paperclip_local.fresh_backup(instance)
+        except (paperclip_local.LocalError, OSError, subprocess.SubprocessError) as error:
+            raise ApiError(str(error)) from None
+        return {"ok": True, "message": "Paperclip made a fresh backup.", "backup": str(path)}
+
+    def paperclip_stage(self, zip=None, folder=None, github=None, instance=None, backup=None):
+        """Get an import ready: Paperclip on this computer (`instance`, optionally a `backup`),
+        a backup file, the exported zip (a data URL), a folder, or a GitHub repository."""
+        return {"token": _call(lambda: paperclip_import.stage(data_url=zip, folder=folder, github=github,
+                                                              instance=instance, backup=backup))}
 
     def paperclip_preview(self, token):
         return _call(lambda: paperclip_import.preview(token))
 
-    def paperclip_apply(self, token, agents=(), skills=(), projects=None, routines=(), tasks=()):
-        result = _call(lambda: paperclip_import.apply(token, agents=agents, skills=skills, projects=projects or {},
-                                                      routines=routines, tasks=tasks))
-        if any(line.startswith("agent ") for line in result["done"]):
-            agentdefs.catalog()  # re-read on the next call: the new agents show at once
-        return result
+    def paperclip_apply(self, token, company, agents=(), skills=(), goals=(), projects=None, routines=(), heartbeats=(),
+                        tasks="open", secrets=(), secret_values=False, history=False, documents=()):
+        return _call(lambda: paperclip_import.apply(
+            token, company, agents=agents, skills=skills, goals=goals, projects=projects or {}, routines=routines,
+            heartbeats=heartbeats, tasks=tasks, secrets=secrets, secret_values=bool(secret_values), history=bool(history),
+            documents=documents))
 
-    def imported_tasks(self):
-        """Tasks brought over from Paperclip, waiting for you to start them."""
-        return paperclip_import.imported_tasks()
+    def backlog(self, which="open", project=None):
+        """Tasks waiting to be started, and finished ones kept as history (backlog.py)."""
+        return {"items": backlog.items(which, project), "counts": backlog.counts()}
 
-    def imported_task_status(self, task_id, status):
-        _call(lambda: paperclip_import.set_task_status(task_id, status))
+    def backlog_item(self, item_id):
+        item = _call(lambda: backlog.get(item_id))
+        return {**item, "start_text": backlog.start_text(item)}
+
+    def backlog_status(self, item_id, status, workspace=None):
+        _call(lambda: backlog.set_status(item_id, status, workspace))
         return {"ok": True}
 
     # --- export and import
