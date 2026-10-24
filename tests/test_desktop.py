@@ -73,5 +73,65 @@ class MacTests(unittest.TestCase):
         self.assertAlmostEqual(desktop._etime_start("01-02:03:04"), __import__("time").time() - (86400 + 7384), delta=5)
 
 
+class CertificateTests(unittest.TestCase):
+    """The phone server's certificate, made with whatever openssl this system has (LibreSSL on
+    macOS)."""
+
+    def setUp(self):
+        support.reset()
+
+    @unittest.skipUnless(__import__("shutil").which("openssl"), "openssl isn't installed")
+    def test_the_certificate_loads_and_names_this_computer(self):
+        import ssl
+        import remote
+        for path in (remote.CERT_PATH, remote.KEY_PATH):
+            path.unlink(missing_ok=True)
+        remote.ensure_certificate(["100.101.102.103"])
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(remote.CERT_PATH, remote.KEY_PATH)
+        text = subprocess.run(["openssl", "x509", "-in", str(remote.CERT_PATH), "-noout", "-text"],
+                              capture_output=True, text=True).stdout
+        self.assertIn("100.101.102.103", text)
+        self.assertIn("127.0.0.1", text)
+        self.assertEqual(oct(remote.KEY_PATH.stat().st_mode & 0o777), "0o600")
+
+
+
+class MacSandboxTests(unittest.TestCase):
+    """A draft agent's install script in macOS's sandbox: checked on a Mac (CI)."""
+
+    def setUp(self):
+        support.reset()
+        self.folder = support.TMP / "tool"
+        self.folder.mkdir(parents=True, exist_ok=True)
+
+    def test_the_profile_keeps_the_script_in_its_folder(self):
+        with mock.patch.object(desktop, "IS_MAC", True), mock.patch.object(desktop.shutil, "which", lambda name: "/usr/bin/" + name):
+            argv = desktop.sandbox_argv(["bash", "x.sh"], self.folder, {"TOOL_DIR": self.folder})
+        self.assertEqual(argv[:2], ["sandbox-exec", "-p"])
+        profile = argv[2]
+        self.assertIn(f'(allow file-write* (subpath "{self.folder.resolve()}")', profile)
+        self.assertIn(f'(deny file-read* (subpath "{desktop.Path.home().resolve() / ".ssh"}"))', profile)
+        self.assertIn(f"HOME={self.folder.resolve()}", argv)
+        self.assertIn(f"TOOL_DIR={self.folder}", argv)
+        self.assertEqual(argv[-2:], ["bash", "x.sh"])
+
+    @unittest.skipUnless(desktop.IS_MAC and desktop.shutil.which("sandbox-exec"), "macOS's sandbox is only on a Mac")
+    def test_a_script_cannot_write_outside_its_folder_or_read_your_keys(self):
+        outside = desktop.Path.home() / f"lago-sandbox-check-{os.getpid()}"
+        secret_dir = desktop.Path.home() / ".ssh"
+        script = (f"echo made > made.txt; echo nope > {outside} 2>/dev/null || echo blocked; "
+                  f"ls {secret_dir} >/dev/null 2>&1 && echo read || echo hidden; echo $HOME")
+        out = subprocess.run(desktop.sandbox_argv(["bash", "-c", script], self.folder), capture_output=True, text=True, timeout=30)
+        self.assertFalse(outside.exists())
+        outside.unlink(missing_ok=True)
+        lines = out.stdout.split()
+        self.assertEqual(lines[0], "blocked", out.stderr)
+        self.assertEqual(lines[-1], str(self.folder.resolve()))
+        self.assertEqual((self.folder / "made.txt").read_text(), "made\n")
+        if secret_dir.exists():
+            self.assertEqual(lines[1], "hidden")
+
+
 if __name__ == "__main__":
     unittest.main()

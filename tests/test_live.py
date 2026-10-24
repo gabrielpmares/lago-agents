@@ -159,8 +159,9 @@ class LiveTests(unittest.TestCase):
                    "cat >> ../calc.py <<'EOF'\nprint(1 > 2)\nEOF\n"
                    "sed -i 's/a/b/' ../README.md; python3 -m unittest 2>&1 > /dev/null")
         found = live.shell_files(command, str(folder))
-        self.assertEqual(found["read"], [str(folder / "calc.py"), str(folder / "src/b.py")])  # missing.py isn't there
-        self.assertEqual(found["edit"], [str(folder / "calc.py"), str(folder / "README.md")])  # not "2)" from the heredoc
+        real = folder.resolve()  # macOS's /var is a link to /private/var
+        self.assertEqual(found["read"], [str(real / "calc.py"), str(real / "src/b.py")])  # missing.py isn't there
+        self.assertEqual(found["edit"], [str(real / "calc.py"), str(real / "README.md")])  # not "2)" from the heredoc
         self.assertEqual(live.shell_files(command, None), {"read": [], "edit": []})
 
         config = config_store.load()

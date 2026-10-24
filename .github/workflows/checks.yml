@@ -24,8 +24,10 @@ jobs:
       - name: Tests
         run: python -m unittest discover -s tests -v
       - name: The app in Safari's engine (WebKit), with an agent's terminal in the page
+        if: success() || failure()
         run: python tests/e2e_app_window.py webkit shots
       - name: The Keychain keeps a secret
+        if: success() || failure()
         run: |
           python - <<'PY'
           import sys
@@ -39,6 +41,7 @@ jobs:
           print("Keychain: stored, read back and removed")
           PY
       - name: The installer makes the app and its background service
+        if: success() || failure()
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
           printf '#!/bin/sh\necho "claude (stand-in for the installer check)"\n' > "$RUNNER_TEMP/bin/claude"
@@ -50,6 +53,7 @@ jobs:
           grep -q "$RUNNER_TEMP/bin" "$HOME/Applications/Lago Agents.app/Contents/MacOS/lago-agents"
           launchctl print "gui/$(id -u)/com.lago-agents.scheduler" | head -5 || echo "(launchd agents may not start on CI machines)"
       - name: The app starts and serves its page
+        if: success() || failure()
         run: |
           python lago/app_server.py --no-window > "$RUNNER_TEMP/url.txt" 2> "$RUNNER_TEMP/server.log" &
           for i in $(seq 1 30); do [ -s "$RUNNER_TEMP/url.txt" ] && break; sleep 1; done
@@ -81,4 +85,5 @@ jobs:
       - name: Tests
         run: python -m unittest discover -s tests -v
       - name: The app without GTK, with an agent's terminal in the page
+        if: success() || failure()
         run: python tests/e2e_app_window.py chromium shots

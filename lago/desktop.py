@@ -116,6 +116,8 @@ def sandbox_argv(argv, folder, env=None):
     the system's programs read-only, the programs on your PATH (Node, uv...) read-only, the
     network, and `folder`, which is all it can write and is its home. Not your home folder,
     your keys, your config or your environment: only `env` (a dict) is set."""
+    if IS_MAC:
+        return _seatbelt_argv(argv, folder, env)
     bwrap = shutil.which("bwrap")
     if not bwrap:
         return None
@@ -152,6 +154,27 @@ def sandbox_argv(argv, folder, env=None):
                    "--setenv", "HOME", str(folder), "--setenv", "LANG", os.environ.get("LANG", "C.UTF-8"),
                    *[arg for name, value in (env or {}).items() for arg in ("--setenv", name, str(value))],
                    "--", *argv]
+
+
+def _seatbelt_argv(argv, folder, env=None):
+    """On macOS, its own sandbox (sandbox-exec): the script writes only its folder and the
+    temporary folders, reads nothing private in your home (keys, config, Claude's and your
+    browsers' data), and gets none of your environment. None without sandbox-exec."""
+    if not shutil.which("sandbox-exec"):
+        return None
+    home, folder = Path.home().resolve(), Path(folder).resolve()
+    quote = lambda path: '"' + str(path).replace("\\", "\\\\").replace('"', '\\"') + '"'  # noqa: E731
+    private = [home / name for name in PRIVATE] + [home / "Library" / name for name in ("Keychains", "Cookies", "Mail", "Messages",
+                                                                                         "Application Support", "Safari")]
+    profile = "\n".join([
+        "(version 1)", "(allow default)",
+        f"(deny file-write* (subpath {quote(home)}))",
+        f"(allow file-write* (subpath {quote(folder)}) (subpath \"/private/tmp\") (subpath \"/private/var/folders\") (literal \"/dev/null\"))",
+        *[f"(deny file-read* (subpath {quote(p)}))" for p in private]])
+    path = os.pathsep.join(dict.fromkeys([p for p in os.environ.get("PATH", "").split(os.pathsep)
+                                          if p and not any(p.startswith(str(x)) for x in private)] + ["/usr/bin", "/bin"]))
+    variables = {"PATH": path, "HOME": str(folder), "LANG": os.environ.get("LANG", "en_US.UTF-8"), **{k: str(v) for k, v in (env or {}).items()}}
+    return ["sandbox-exec", "-p", profile, "env", "-i", *[f"{k}={v}" for k, v in variables.items()], *argv]
 
 
 # ---------------------------------------------------------------- opening things

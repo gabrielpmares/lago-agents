@@ -211,14 +211,21 @@ def ensure_certificate(addresses=()):
         raise RemoteError("openssl is needed to make the server's certificate")
     names = ["DNS:" + socket.gethostname(), "DNS:localhost", "IP:127.0.0.1"]
     names += [f"IP:{a}" for a in addresses if a]
-    proc = subprocess.run(
-        ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
-         "-nodes", "-days", "3650", "-subj", "/CN=Lago Agents",
-         "-addext", "subjectAltName=" + ",".join(names),
-         "-keyout", str(KEY_PATH), "-out", str(CERT_PATH)],
-        capture_output=True, text=True, timeout=30)
-    if proc.returncode != 0:
-        raise RemoteError(f"openssl failed: {proc.stderr.strip()}")
+    # Two steps and a config file: what both OpenSSL and macOS's LibreSSL understand.
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".cnf", delete=False) as conf:
+        conf.write("[req]\ndistinguished_name = dn\nx509_extensions = v3\nprompt = no\n[dn]\nCN = Lago Agents\n"
+                   f"[v3]\nsubjectAltName = {','.join(names)}\nbasicConstraints = critical,CA:FALSE\n")
+    try:
+        for command in (["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(KEY_PATH)],
+                        ["openssl", "req", "-new", "-x509", "-key", str(KEY_PATH), "-days", "3650", "-config", conf.name,
+                         "-out", str(CERT_PATH)]):
+            proc = subprocess.run(command, capture_output=True, text=True, timeout=30)
+            if proc.returncode != 0:
+                KEY_PATH.unlink(missing_ok=True)
+                raise RemoteError(f"openssl failed: {proc.stderr.strip()}")
+    finally:
+        os.unlink(conf.name)
     os.chmod(KEY_PATH, 0o600)
     os.chmod(CERT_PATH, 0o600)
 

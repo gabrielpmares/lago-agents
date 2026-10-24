@@ -646,7 +646,7 @@ cd {shlex.quote(str(cwd))} || exit 1
 code=$?
 {shlex.quote(PYTHON)} {shlex.quote(str(APP_DIR / 'lago_hook.py'))} --codex-exited "$code"
 # Messages that came while it ran start its next run, once this session has closed.
-setsid nohup sh -c 'sleep 2; exec "$0" "$1" --codex-pump' {shlex.quote(PYTHON)} {shlex.quote(str(APP_DIR / 'lago_hook.py'))} >/dev/null 2>&1 &
+{shlex.quote(PYTHON)} -c 'import subprocess, sys; subprocess.Popen(sys.argv[1:], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)' sh -c 'sleep 2; exec "$0" "$1" --codex-pump' {shlex.quote(PYTHON)} {shlex.quote(str(APP_DIR / 'lago_hook.py'))}
 """)
     session_id = f"codex-{uuid.uuid4()}"
     hub.set_state(agent_id, status="working", detail="Working on Codex", session_id=session_id,

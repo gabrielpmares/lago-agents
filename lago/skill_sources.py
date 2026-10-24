@@ -105,7 +105,7 @@ def fetch(repo, path="", ref=""):
         shutil.rmtree(folder, ignore_errors=True)
         raise
     meta = {"id": draft_id, "name": name, "repo": repo, "commit": commit,
-            "path": skill_dir.relative_to(clone).as_posix() if skill_dir != clone else "",
+            "path": skill_dir.resolve().relative_to(clone.resolve()).as_posix() if skill_dir.resolve() != clone.resolve() else "",
             "files": files, "warnings": warnings, "status": "ready", "created_at": time.time()}
     _save(meta)
     activity.log(activity.actor(), "skill.fetched", f"{name} from {repo}@{commit[:10]} (draft #{draft_id})")

@@ -25,7 +25,7 @@ class AppearanceTests(unittest.TestCase):
 
     def test_auto_follows_the_desktop(self):
         desktop = mock.Mock(stdout="'prefer-dark'\n")
-        with mock.patch("subprocess.run", return_value=desktop):
+        with mock.patch("subprocess.run", return_value=desktop), mock.patch("desktop.IS_MAC", False):  # GNOME's setting
             self.assertEqual(self.api.set_appearance("auto")["theme"], "dark")
 
     def test_saving_teams_keeps_the_choice(self):

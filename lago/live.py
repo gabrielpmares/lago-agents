@@ -311,16 +311,18 @@ def files(config, project, hours=24, now=None, with_tree=True):
     `repo_prefix` is the folder's path inside its repository, for the session's diff. Without
     `with_tree`, "files" is None (the page already has it)."""
     import swarm
-    folder = swarm.project_cwd(config["projects"][project]).resolve()
+    given = swarm.project_cwd(config["projects"][project])
+    folder = given.resolve()  # agents name files either way when the folder's path has a link in it (macOS's /var)
     if not folder.is_dir():
         return {"folder": str(folder), "repo_prefix": "", "files": [], "more": 0, "touched": {}, "missing": True}
     root = changes.repo_root(folder)
+    root = Path(root).resolve() if root else None
     prefix = str(folder.relative_to(root.resolve())) if root and folder.is_relative_to(root.resolve()) else ""
     prefix = "" if prefix == "." else prefix
     now = now or time.time()
     _ensure()
     tools = READS + EDITS
-    places = [f"{folder}/%"] + ([f"{root}/.worktrees/%"] if root else [])
+    places = list(dict.fromkeys([f"{given}/%", f"{folder}/%"])) + (["%/.worktrees/%"] if root else [])
     with hub.connect() as conn:
         rows = conn.execute(f"SELECT agent_id, tool, subject, at FROM tool_calls WHERE at > ? AND tool IN ({','.join('?' * len(tools))}) "
                             f"AND ({' OR '.join(['subject LIKE ?'] * len(places))}) ORDER BY at DESC",
@@ -331,6 +333,7 @@ def files(config, project, hours=24, now=None, with_tree=True):
         path, branch = Path(row["subject"]), None
         if not path.is_absolute():
             continue
+        path = path.resolve()
         if root and path.is_relative_to(root / ".worktrees"):
             match = WORKTREE.match(str(path.relative_to(root)))
             inside = match and Path(match.group(2))

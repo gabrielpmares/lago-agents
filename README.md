@@ -118,7 +118,7 @@ What's different on a Mac:
 | Lago's voice | `afplay`; macOS's own voices (`say`) work offline with no setup |
 | Talking to Lago | `brew install ffmpeg`, plus the speech venv below; macOS asks once for the microphone |
 | Terminal windows | iTerm if it's installed, else Terminal |
-| Agents built from GitHub | Their install scripts run without the bubblewrap sandbox (there's none on macOS): read them before you approve |
+| Agents built from GitHub | Their install scripts run in macOS's own sandbox (`sandbox-exec`) instead of bubblewrap: their folder only, nothing private |
 
 For the voice (optional), install a recorder and player (PipeWire's `pw-record`/`pw-play`,
 or PulseAudio's `parecord`/`paplay`, or ALSA's `arecord`), `ffmpeg` and, as a fallback

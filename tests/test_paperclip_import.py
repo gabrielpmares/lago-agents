@@ -8,6 +8,7 @@ import io
 import os
 import unittest
 import zipfile
+from pathlib import Path
 from unittest import mock
 
 import support
@@ -180,7 +181,7 @@ class LocalTests(Base):
         self.assertEqual(items["NOR-1"]["goal_id"], g2["id"])
         attachment = items["NOR-3"]["body"].split("- ")[-1].strip()
         self.assertTrue(attachment.endswith("NOR-3/crash.log"))
-        self.assertEqual(open(os.path.expanduser(attachment)).read(), "conflict at 10:42\n")
+        self.assertEqual(Path(os.path.expanduser(attachment)).read_text(), "conflict at 10:42\n")
 
         if fx.encrypt("x"):
             self.assertEqual(support.KEYRING.lookup("stripe-api-key", ""), "sk_test_123")

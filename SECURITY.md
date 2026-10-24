@@ -33,11 +33,11 @@ call that's already running finishes first.
 
 **Agents built from GitHub repos.** A drafted agent installs nothing until you approve it.
 Its files are fingerprinted when it's submitted, and a draft changed after that is refused.
-Its install script runs in a bubblewrap sandbox (`desktop.sandbox_argv`): it sees the
-system's programs, the network and its own folder under `~/lago-work/tools`, and none of
-your files, keys or environment. Without bubblewrap installed, the script runs unsandboxed
-(with none of your environment) and its log says so. Install `bubblewrap` to close that
-gap. What the installed agent does afterwards is covered by the permission prompts, like
+Its install script runs in a sandbox (`desktop.sandbox_argv`): bubblewrap on Linux, macOS's own
+`sandbox-exec` on a Mac. It sees the system's programs, the network and its own folder under
+`~/lago-work/tools`, and none of your files, keys or environment. On Linux without bubblewrap
+installed, the script runs unsandboxed (with none of your environment) and its log says so:
+install `bubblewrap` to close that gap. What the installed agent does afterwards is covered by the permission prompts, like
 any other agent.
 
 **The phone app** connects over Tailscale only, with TLS pinned to this computer's
