@@ -86,8 +86,11 @@ def run_turn(agent_id, text, args, cwd):
     proc = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True, start_new_session=True)
     try:
-        proc.stdin.write(text)
-        proc.stdin.close()
+        try:
+            proc.stdin.write(text)
+            proc.stdin.close()
+        except BrokenPipeError:  # Codex quit before reading the prompt (a failed login): its output says why
+            pass
         for line in proc.stdout:
             try:
                 event = json.loads(line)
