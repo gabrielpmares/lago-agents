@@ -116,7 +116,7 @@ What's different on a Mac:
 | Secrets | The Keychain ("Lago Agents" entries) |
 | Background scheduler, phone access, "Hey Lago" | launchd agents in `~/Library/LaunchAgents` (`com.lago-agents.*`), logs in `~/Library/Logs/lago-agents` |
 | Lago's voice | `afplay`; **Install voices** in Lago's settings (or the persona picker) gets his Kokoro voices, and `brew install ffmpeg` their effects. Until then macOS's own voices (`say`) speak |
-| Talking to Lago | `brew install ffmpeg`, plus the speech venv below; macOS asks once for the microphone |
+| Talking to Lago | `brew install ffmpeg`, plus the speech venv below; macOS asks once for the microphone (say no and Lago still speaks and you type; the mic button says how to allow it later) |
 | Terminal windows | iTerm if it's installed, else Terminal |
 | Agents built from GitHub | Their install scripts run in macOS's own sandbox (`sandbox-exec`) instead of bubblewrap: their folder only, nothing private |
 

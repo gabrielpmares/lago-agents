@@ -15,6 +15,8 @@ stops and removes the service. Everything stays on this machine:
   calling another one switches Lago to him, and he answers what you said.
 - It doesn't listen while Lago is speaking (his voice would wake it) or while the app's own
   push-to-talk is recording.
+- A microphone that gives only silence for SILENT_WARN_SECONDS (on macOS, one Lago wasn't
+  allowed to use) is logged once with how to allow it.
 
     listen.py [--test]   --test prints what it hears instead of sending it
 """
@@ -50,6 +52,7 @@ COMMAND_SILENCE_SECONDS = 1.3     # a pause this long after speaking ends the co
 COMMAND_WAIT_SECONDS = 6          # "Hey Lago" then silence: wait this long for the rest
 COMMAND_MAX_SECONDS = 60
 SETTING_POLL_SECONDS = 3
+SILENT_WARN_SECONDS = 10
 WAKE_MATCH = 0.65                 # how close each word must be to the phrase's word
 # The tiny model is hinted with the phrase, and on speech it can't make out (another
 # language, a TV across the room) it tends to write the hint back: "Hey Lago." Those
@@ -151,6 +154,7 @@ class Listener:
     def __init__(self, test=False):
         self.test = test
         self.wake_model = self.command_model = None  # loaded once listening is switched on
+        self.silent_since, self.warned_silent = None, False
 
     def load(self):
         import numpy
@@ -219,6 +223,7 @@ class Listener:
             block = self.read(recorder)
             if block is None:
                 return
+            self.check_silence(block)
             if deaf():
                 preroll.clear()
                 continue
@@ -228,6 +233,15 @@ class Listener:
             self.utterance(recorder, list(preroll) + [block], phrases)
             preroll.clear()
             until = time.time() + SETTING_POLL_SECONDS
+
+    def check_silence(self, block):
+        if float(abs(block).max()) * 32768 >= mic.SILENT_PEAK:
+            self.silent_since = None
+        elif self.silent_since is None:
+            self.silent_since = time.time()
+        elif not self.warned_silent and time.time() - self.silent_since >= SILENT_WARN_SECONDS:
+            log(mic.no_microphone())
+            self.warned_silent = True
 
     def utterance(self, recorder, blocks, phrases):
         """Someone started talking: check the start for a phrase, then take the command."""

@@ -3,12 +3,20 @@
 The app starts a recording when you press the microphone button (or Ctrl+Space) and stops
 it when you press again; transcribe.py turns it into text locally with Whisper. Only one
 recording runs at a time, and a forgotten one stops by itself after MAX_SECONDS.
+
+Talking is optional: someone who doesn't let Lago use the microphone still types, and his
+voices still speak. macOS records only silence for an app it was denied the microphone, so a
+recording that is all zeros says how to allow it instead of going to Whisper, which would make
+up words for it ("Thank you.") and send them.
 """
 
+import array
 import signal
 import subprocess
+import sys
 import threading
 import time
+import wave
 
 import config_store
 import desktop
@@ -19,6 +27,7 @@ RECORDING = STATE_DIR / "mic.wav"
 TRANSCRIBE = APP_DIR / "transcribe.py"
 MAX_SECONDS = 120
 TRANSCRIBE_TIMEOUT = 120
+SILENT_PEAK = 4  # a working microphone's own noise is louder than this, even in a quiet room
 
 
 class MicError(Exception):
@@ -28,6 +37,24 @@ class MicError(Exception):
 _lock = threading.Lock()
 _recorder = None
 _started = 0.0
+
+
+def no_microphone():
+    """What to say when the microphone gives nothing: blocked, muted or not there."""
+    if sys.platform == "darwin":
+        return ("Lago can't hear the microphone. To talk to him, allow Lago Agents in System Settings, "
+                "Privacy & Security, Microphone; typing works without it.")
+    return "Lago can't hear the microphone: check that it's connected and not muted. Typing works without it."
+
+
+def silent(path):
+    """True for a WAV file with no sound at all (or none that can be read)."""
+    try:
+        with wave.open(str(path)) as recording:
+            samples = array.array("h", recording.readframes(recording.getnframes()))
+    except (OSError, EOFError, wave.Error):
+        return True
+    return max(map(abs, samples), default=0) < SILENT_PEAK
 
 
 def available():
@@ -96,9 +123,12 @@ def stop_and_transcribe():
     """Stop recording and return what you said ("" when nothing was heard)."""
     with _lock:
         seconds = _stop()
-    if seconds < 0.4 or not RECORDING.exists():
+    if seconds < 0.4:
         RECORDING.unlink(missing_ok=True)
         return ""
+    if not RECORDING.exists() or silent(RECORDING):  # the recorder couldn't start, or only got silence
+        RECORDING.unlink(missing_ok=True)
+        raise MicError(no_microphone())
     try:
         proc = subprocess.run([str(TTS_PYTHON), str(TRANSCRIBE), "--hint", _hint(), str(RECORDING)],
                               capture_output=True, text=True, timeout=TRANSCRIBE_TIMEOUT)
