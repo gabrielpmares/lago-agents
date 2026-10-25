@@ -103,6 +103,11 @@ brew install python tmux git          # and Claude Code: npm install -g @anthrop
                                       # definitions and skills, starts the background scheduler
 ```
 
+If Homebrew's Python was built for a newer macOS than yours, it can't load its XML module
+(`Symbol not found: _XML_...`), and pip needs it. `install.sh` then uses another Python 3.11+ on
+your PATH, such as python.org's, and tells you which. With none, it asks you to update macOS or
+install Python from python.org.
+
 Open Lago Agents from Spotlight, Launchpad or `~/Applications`. It's the same app as on Linux
 in a window of its own (`app_server.py`: it serves the page to a WebKit window on this Mac
 only, behind a secret), with each agent's terminal live in the page. If the window library

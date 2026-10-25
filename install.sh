@@ -41,10 +41,32 @@ if (( ${#missing[@]} )); then
     fi
     exit 1
 fi
-python3 - "$OS" <<'PY' || { echo "See README.md, Install." >&2; exit 1; }
+# The Python everything here runs with: python3, unless it's too old or broken. Homebrew's
+# Pythons can be built for a newer macOS than this one, and then can't load their XML module
+# (pyexpat, which pip needs) against this macOS's libexpat; so on a Mac every python3 and
+# python3.1x on the PATH is tried, python.org's (in /usr/local/bin) among them.
+PY=python3
+if [[ "$OS" == Darwin ]]; then
+    for candidate in $(type -ap python3 python3.15 python3.14 python3.13 python3.12 python3.11); do
+        if "$candidate" -c 'import sys, pyexpat; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+            PY="$candidate"
+            break
+        fi
+    done
+    if [[ "$PY" != python3 ]]; then
+        echo "Using $("$PY" -V) ($PY): python3 is too old or can't load its XML module, which pip needs."
+    fi
+fi
+"$PY" - "$OS" <<'PY' || { echo "See README.md, Install." >&2; exit 1; }
 import sys
 if sys.version_info < (3, 11):
     sys.exit("Lago Agents needs Python 3.11 or newer" + (" (brew install python)" if sys.argv[1] == "Darwin" else "") + ".")
+if sys.argv[1] == "Darwin":
+    try:
+        import pyexpat  # noqa: F401
+    except ImportError as error:
+        sys.exit(f"This Python can't load its XML module, which pip needs ({error}). "
+                 "Update macOS, or install Python from https://www.python.org/downloads/macos/")
 if sys.argv[1] != "Darwin":
     try:
         import gi
@@ -56,15 +78,17 @@ if sys.argv[1] != "Darwin":
 PY
 
 chmod +x "$APP/lago_agents.py" "$APP/lago_hook.py" "$APP/lago_mcp.py" "$APP/install_plugins.py" "$SCRIPT_DIR/lago-agents"
-PYTHON=python3
+PYTHON="$PY"
 
 if [[ "$OS" == Darwin ]]; then
     # The window: a native one through pywebview, in a venv of the app's own (Homebrew's Python
     # won't take packages system-wide). Without it, Lago opens in Chrome (or your browser).
     VENV="$STATE_DIR/app-venv"
     mkdir -p "$STATE_DIR"
-    if [[ ! -x "$VENV/bin/python" ]]; then
-        python3 -m venv "$VENV"
+    # A venv left by an earlier install whose Python broke (or that died before pip) is made again.
+    if ! "$VENV/bin/python" -c 'import pyexpat, pip' 2>/dev/null; then
+        rm -rf "$VENV"
+        "$PY" -m venv "$VENV"
     fi
     if "$VENV/bin/python" -m pip install --quiet --upgrade pywebview; then
         PYTHON="$VENV/bin/python"
@@ -100,7 +124,7 @@ for skill in "$DATA_DIR"/claude-skills/*/; do
     [[ -d "$target" && ! -L "$target" ]] && rm -rf "$target"
     ln -sfn "$skill" "$target"
 done
-python3 "$APP/validate_skills.py" "$DATA_DIR/claude-skills" \
+"$PY" "$APP/validate_skills.py" "$DATA_DIR/claude-skills" \
     || echo "Some skills don't follow the Agent Skills spec (see above)." >&2
 
 # Links into your data folder whose target is gone (a renamed or removed agent or skill).
@@ -111,7 +135,7 @@ for link in "$HOME"/.claude/agents/*.md "$HOME"/.claude/skills/*; do
 done
 
 # Plugins: install the ones in your claude-plugins/plugins.json that are missing.
-python3 "$APP/install_plugins.py"
+"$PY" "$APP/install_plugins.py"
 
 if [[ "$OS" == Darwin ]]; then
     # An app in ~/Applications (Spotlight, Launchpad, the Dock). Apps opened from the Finder get
@@ -171,7 +195,7 @@ DESKTOP
 fi
 
 # Claude Code or Codex using Lago Agents as an MCP server: point them at this checkout.
-python3 - "$APP" <<'PY' || true
+"$PY" - "$APP" <<'PY' || true
 import sys
 sys.path.insert(0, sys.argv[1])
 import connectors
