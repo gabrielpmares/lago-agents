@@ -71,6 +71,15 @@ class VoiceSetupTests(unittest.TestCase):
         self.install()  # again: nothing downloaded twice
         self.assertEqual(self.fetched, [])
 
+    def test_a_venv_missing_a_package_added_since_installs_again(self):
+        self.install()
+        voice_setup._packages_file().write_text(json.dumps(["kokoro-onnx", "edge-tts", "faster-whisper"]))
+        self.assertFalse(voice_setup.status()["installed"])  # the app offers Install voices again
+        self.runs.clear()
+        self.install()
+        self.assertEqual([r[2] for r in self.runs], ["pip"])  # no new venv, no downloads; pip adds soundfile
+        self.assertTrue(voice_setup.status()["installed"])
+
     def test_a_failed_download_says_so_and_leaves_no_half_file(self):
         def broken(url, timeout=None):
             raise OSError("network is unreachable")

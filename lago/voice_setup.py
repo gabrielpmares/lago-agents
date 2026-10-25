@@ -27,8 +27,20 @@ MODEL_FILES = ["kokoro-v1.0.onnx", "voices-v1.0.bin"]
 STALE_SECONDS = 30 * 60  # a "running" status this old belongs to an install that died
 
 
+def _packages_file():
+    """The PACKAGES the venv's last install had, so a venv from before one was added installs again."""
+    return voice.TTS_PYTHON.parent.parent / "lago-packages.json"
+
+
+def _has_packages():
+    try:
+        return set(PACKAGES) <= set(json.loads(_packages_file().read_text()))
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def installed():
-    return voice.TTS_PYTHON.exists() and voice.KOKORO_MODEL.exists() \
+    return voice.TTS_PYTHON.exists() and _has_packages() and voice.KOKORO_MODEL.exists() \
         and (voice.KOKORO_MODEL.parent / "voices-v1.0.bin").exists()
 
 
@@ -70,6 +82,7 @@ def _venv():
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
     _write("running", "Installing the speech engines (a few minutes)")
     subprocess.run([str(voice.TTS_PYTHON), "-m", "pip", "install", "--quiet", "--upgrade", *PACKAGES], check=True)
+    _packages_file().write_text(json.dumps(PACKAGES))
 
 
 def _download(name, folder):
