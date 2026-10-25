@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import webbrowser
 from pathlib import Path
 
@@ -421,7 +422,16 @@ def service_enable(name, start=True):
     """Start a defined service now and with every login."""
     if IS_MAC:
         _launchctl("bootout", f"{_domain()}/{_label(name)}", check=False)  # reload a changed plist
-        _launchctl("bootstrap", _domain(), str(service_path(name)))
+        # bootout returns before the old process has gone, and bootstrapping meanwhile fails
+        # ("Bootstrap failed: 5: Input/output error"), so give it a few seconds.
+        for attempt in range(20):
+            try:
+                _launchctl("bootstrap", _domain(), str(service_path(name)))
+                break
+            except ServiceError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.25)
         _launchctl("enable", f"{_domain()}/{_label(name)}", check=False)
         return
     _systemctl("enable", *(["--now"] if start else []), name)

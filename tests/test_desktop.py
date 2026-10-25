@@ -40,6 +40,18 @@ class MacTests(unittest.TestCase):
         on_failure = plistlib.loads(desktop.service_write("x.service", ["a"], "d", restart="on-failure").read_bytes())
         self.assertEqual(on_failure["KeepAlive"], {"SuccessfulExit": False})
 
+    def test_a_reloaded_service_waits_for_the_old_one_to_go(self):
+        desktop.service_write("lago-agents-scheduler.service", ["a"], "d")
+        failures = iter(["Bootstrap failed: 5: Input/output error"] * 2)
+
+        def launchctl(*args, check=True):
+            if args[0] == "bootstrap" and (error := next(failures, None)):
+                raise desktop.ServiceError(error)
+            return subprocess.CompletedProcess(args, 0, "", "")
+        with mock.patch.object(desktop, "_launchctl", launchctl), mock.patch.object(desktop.time, "sleep") as sleep:
+            desktop.service_enable("lago-agents-scheduler.service")
+        self.assertEqual(sleep.call_count, 2)
+
     def test_the_keychain_gets_the_value_on_stdin_never_on_a_command_line(self):
         runs = []
 
