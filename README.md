@@ -772,6 +772,9 @@ What Lago Agents protects, what it doesn't, and how to report a problem privatel
 
 ## License
 
-MIT (see `LICENSE`). The bundled fonts and icons keep their own licenses: Geist (SIL Open
-Font License, `lago/ui/vendor/fonts/LICENSE-geist.txt`), Phosphor Icons (MIT,
-`lago/ui/vendor/phosphor/LICENSE`) and qrcode.js (MIT, by Kazuhiko Arase).
+GNU Affero General Public License v3.0 (see `LICENSE`), copyright 2026 Lago Agents
+contributors. You can use, change and share it freely; if you run a changed version as a
+service for others, you must offer them its source too.
+
+The bundled fonts and icons keep their own licenses: Geist (SIL Open Font License,
+`lago/ui/vendor/fonts/LICENSE-geist.txt`), Phosphor Icons (MIT, `lago/ui/vendor/phosphor/LICENSE`) and qrcode.js (MIT, by Kazuhiko Arase).
