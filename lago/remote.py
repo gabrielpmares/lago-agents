@@ -570,6 +570,7 @@ def _remote_api_class():
     """The desktop's Api, with what only makes sense on the desktop replaced."""
     import api as desktop
     import config_store
+    import hub
     import runner
 
     class HeadlessWindow:
@@ -700,6 +701,55 @@ def _remote_api_class():
                 (voice.PHONE_QUEUE / id).unlink(missing_ok=True)
             return {"ok": True}
 
+        # --- phone calls with Lago (calls.py)
+
+        def call_start(self):
+            """You call Lago from the phone."""
+            import calls
+            return {"call": calls.start()}
+
+        def call_answer(self, id):
+            import calls
+            call = calls.answer(id)
+            if not call:
+                raise desktop.ApiError("That call has ended")
+            return {"call": call}
+
+        def call_end(self, id, how="hung up"):
+            import calls
+            return {"ok": calls.end(id, how if how in ("hung up", "declined") else "hung up")}
+
+        def call_say(self, id, text):
+            """What you said on the call."""
+            import calls
+            call = calls.say(id, text)
+            if not call:
+                raise desktop.ApiError("That call has ended")
+            return {"call": calls.public(call)}
+
+        def call_hush(self):
+            """You cut him off: stop what he's saying and what's queued to be said."""
+            import voice
+            voice.hush()
+            return {"ok": True}
+
+        def call_state(self, id):
+            """Checked every few seconds during a call: who's on it and whether he's thinking
+            or talking, so the phone knows when to listen."""
+            import calls
+            import voice
+            call = calls.seen(id)
+            if not call:
+                return {"call": None}
+            oid = config_store.ORCHESTRATOR_ID
+            status = hub.get_state(oid)["status"] if runner.is_running(oid) else "stopped"
+            # Quiet for long after you spoke: say why (Claude overloaded, a limit), once.
+            trouble = calls.stalled(call, lambda: runner.capture(oid, 30))
+            if trouble and trouble[1]:
+                voice.say(trouble[1], voice.settings(config_store.load()), "problem")
+            return {"call": calls.public(call), "lago": status, "note": trouble and trouble[0],
+                    "speaking": voice.speaking() or bool(pending_speech())}
+
         # --- the phone's notifications
 
         def alerts(self):
@@ -810,7 +860,11 @@ def pending_speech():
         for path in sorted(voice.PHONE_QUEUE.iterdir()):
             if not SPEECH_NAME.match(path.name):
                 continue
-            if time.time() - path.stat().st_mtime > SPEECH_KEEP_SECONDS:
+            try:
+                made = path.stat().st_mtime
+            except OSError:  # played and removed (speech_done) just now
+                continue
+            if time.time() - made > SPEECH_KEEP_SECONDS:
                 path.unlink(missing_ok=True)
                 continue
             found.append({"id": path.name})
@@ -847,6 +901,7 @@ class AlertFeed:
         self.app = app_info()
         self.speech = []
         self.hush = hush_stamp()
+        self.call = None
 
     def wait(self, since, hold):
         with self.cond:
@@ -856,38 +911,60 @@ class AlertFeed:
                 self.thread.start()
             self.cond.wait_for(lambda: self.version and self.version != since, timeout=hold)
             return {"version": self.version, "notifications": self.items, "app": self.app,
-                    "speech": self.speech, "hush": self.hush}
+                    "speech": self.speech, "hush": self.hush, "call": self.call}
 
     def _loop(self):
+        import calls
         import hub
         import voice
         files = [hub.DB_PATH, hub.DB_PATH.with_name(hub.DB_PATH.name + "-wal"), APP_DIR / "app.json",
-                 voice.PHONE_QUEUE, voice.HUSH_STAMP]
+                 voice.PHONE_QUEUE, voice.HUSH_STAMP, calls.CALL_PATH]
         stamp, built = None, 0.0
         while True:
             if time.time() - self.listened > FEED_IDLE_SECONDS:
                 time.sleep(1)
                 stamp = None
                 continue
-            now_stamp = tuple(f.stat().st_mtime_ns if f.exists() else 0 for f in files)
+            now_stamp = tuple(_mtime_ns(f) for f in files)
             if now_stamp != stamp or time.time() - built > REBUILD_SECONDS:
                 stamp, built = now_stamp, time.time()
                 try:
-                    items = self.api.alerts()["notifications"]
-                except Exception as error:  # keep the feed alive; the phone keeps its last list
-                    log.info("alert feed: %r", error)
-                    items = None
-                if items is not None:
-                    app, speech, hush = app_info(), pending_speech(), hush_stamp()
-                    signature = json.dumps([[(i["key"], i["title"], i.get("text")) for i in items],
-                                            app and app["code"], [x["id"] for x in speech], hush])
-                    if signature != self.signature:
-                        with self.cond:
-                            self.signature, self.items, self.app = signature, items, app
-                            self.speech, self.hush = speech, hush
-                            self.version += 1
-                            self.cond.notify_all()
+                    self._rebuild(calls)
+                except Exception as error:  # never let the feed die: it carries alerts, calls and his voice
+                    log.warning("alert feed: %r", error)
+                    stamp = None
             time.sleep(WATCH_SECONDS)
+
+    def _rebuild(self, calls):
+        """Read what needs you and tell waiting phones if anything changed."""
+        try:
+            items = self.api.alerts()["notifications"]
+        except Exception as error:  # keep the feed alive; the phone keeps its last list
+            log.info("alert feed: %r", error)
+            items = None
+        if items is not None:
+            try:
+                calls.consider(items)  # Lago may ring you about one of them
+            except Exception as error:
+                log.info("calls: %r", error)
+            app, speech, hush, call = app_info(), pending_speech(), hush_stamp(), calls.public(calls.current())
+            signature = json.dumps([[(i["key"], i["title"], i.get("text")) for i in items],
+                                    app and app["code"], [x["id"] for x in speech], hush,
+                                    call and [call["id"], call["state"], call["persona"]]])
+            if signature != self.signature:
+                with self.cond:
+                    self.signature, self.items, self.app = signature, items, app
+                    self.speech, self.hush, self.call = speech, hush, call
+                    self.version += 1
+                    self.cond.notify_all()
+
+
+def _mtime_ns(path):
+    """When `path` last changed; 0 if it isn't there (SQLite's -wal comes and goes)."""
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return 0
 
 
 # ---------------------------------------------------------------- HTTP
@@ -1102,6 +1179,7 @@ class Handler(BaseHTTPRequestHandler):
             print(f"lago-remote: {method} failed: {error!r}", file=sys.stderr)
             return self.send_json(200, {"ok": False, "error": f"Something went wrong: {error}"})
         if method in ("start_orchestrator", "restart_lago", "welcome", "say_to_orchestrator", "send_message", "press",
+                      "call_start", "call_answer", "call_say",
                       "terminal_send", "terminal_key", "start_agent", "stop_agent", "server_deploy"):
             log.info("%s from device %s", method, device["id"])
         return self.send_json(200, {"ok": True, "data": _rewrite_files(result)})

@@ -312,11 +312,17 @@ def reply_category(reply):
 
 def speak_reply(config, reply):
     """Say the spoken line of the Orchestrator's reply, if Lago talks. Returns what was said."""
+    import calls
     voice = settings(config)
     text = spoken_line(reply)
-    if not text or not voice["talk"] or quiet_now(voice):
+    on_call = calls.active()  # on a call he always answers aloud, quiet hours or not
+    if not text or (not on_call and (not voice["talk"] or quiet_now(voice))):
         return ""
-    return text if say(text, voice, reply_category(reply)) else ""
+    if not say(text, voice, reply_category(reply)):
+        return ""
+    if on_call:
+        calls.spoke()
+    return text
 
 
 def announce(config, kind, project_name):
@@ -329,7 +335,11 @@ def announce(config, kind, project_name):
 
 
 def to_phone():
-    """Whether Lago should talk on your phone now (see remote.py's VoiceRoute)."""
+    """Whether Lago should talk on your phone now (see remote.py's VoiceRoute), as he
+    always does during a phone call."""
+    import calls
+    if calls.active():
+        return True
     try:
         import json
         route = json.loads(ROUTE_FILE.read_text())

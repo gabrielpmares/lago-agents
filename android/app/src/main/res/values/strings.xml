@@ -7,4 +7,6 @@
     <string name="channel_live_desc">Shown while instant alerts keep a connection to your computer.</string>
     <string name="channel_updates">App updates</string>
     <string name="channel_updates_desc">A new version of the app from your computer.</string>
+    <string name="shortcut_call">Call</string>
+    <string name="shortcut_call_long">Call your assistant</string>
 </resources>

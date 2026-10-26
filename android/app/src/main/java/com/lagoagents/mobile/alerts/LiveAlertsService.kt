@@ -102,6 +102,7 @@ class LiveAlertsService : Service() {
                 outageSince = 0L
                 com.lagoagents.mobile.update.Updater.announced(applicationContext, answer.optJSONObject("app"))
                 com.lagoagents.mobile.voice.SpeechPlayer.announced(applicationContext, answer.optJSONArray("speech"), answer.optLong("hush"))
+                com.lagoagents.mobile.call.Ringer.announced(applicationContext, answer.optJSONObject("call"))
                 val version = answer.optLong("version")
                 if (version != since) {
                     since = version

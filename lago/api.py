@@ -22,6 +22,7 @@ import background
 import backups
 import budgets
 import cache
+import calls
 import codex_runtime
 import company
 import config_store
@@ -1371,6 +1372,7 @@ class Api:
                 "sessions": sessions, "events": decisions.with_verdicts(hub.events(limit=40)),
                 "runs": _agent_runs(states, running, now),
                 "voice": voice.settings(config), "voices": voice.voices(), "voice_setup": voice_setup.status(),
+                "calls": calls.settings(config),
                 "effects": [{"id": k, "label": v} for k, v in voice.EFFECTS.items()],
                 "wake_sounds": [{"id": k, "label": v} for k, v in voice.WAKE_SOUNDS.items()
                                 if not k.startswith("/") or Path(k).is_file()],  # the desktop's own sounds vary
@@ -1700,6 +1702,20 @@ class Api:
             except listen.ListenError as error:
                 raise ApiError(str(error)) from error
         config["voice"] = clean
+        config_store.save(config)
+        return {"ok": True, "message": "Saved."}
+
+    def save_calls(self, settings):
+        """When Lago may ring your phone (calls.py)."""
+        if not isinstance(settings, dict):
+            raise ApiError("Call settings must be an object")
+        try:
+            wait = max(0, min(240, int(settings.get("wait_minutes", calls.DEFAULTS["wait_minutes"]))))
+        except (TypeError, ValueError) as error:
+            raise ApiError("The wait must be a number of minutes") from error
+        kinds = [k for k in settings.get("kinds") or [] if k in calls.KIND_GROUPS]
+        config = config_store.without_swarm(config_store.load())
+        config["calls"] = {"ring": bool(settings.get("ring")), "wait_minutes": wait, "kinds": kinds}
         config_store.save(config)
         return {"ok": True, "message": "Saved."}
 

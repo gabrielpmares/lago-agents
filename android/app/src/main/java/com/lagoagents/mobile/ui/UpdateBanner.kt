@@ -42,7 +42,8 @@ fun UpdateBanner(state: UpdateState, onUpdate: () -> Unit) {
                 Text(
                     when (state) {
                         is UpdateState.Downloading -> "Downloading version ${release.name}…"
-                        is UpdateState.Installing -> "Installing version ${release.name}…"
+                        is UpdateState.Installing -> if (state.confirm != null) "Version ${release.name}: Android asks for your OK"
+                            else "Installing version ${release.name}…"
                         else -> "Version ${release.name} is ready"
                     },
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
@@ -56,7 +57,9 @@ fun UpdateBanner(state: UpdateState, onUpdate: () -> Unit) {
                     if (release.notes.isNotBlank()) TextButton(onClick = { notesFor = release }) { Text("What's new") }
                     TextButton(onClick = onUpdate) { Text("Update") }
                 }
-                is UpdateState.Installing -> {
+                is UpdateState.Installing -> if (state.confirm != null) {
+                    TextButton(onClick = onUpdate) { Text("Finish") }
+                } else {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.size(14.dp))
                 }

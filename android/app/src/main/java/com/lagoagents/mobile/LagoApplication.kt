@@ -10,6 +10,7 @@ class LagoApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         Alerts.createChannels(this)
+        com.lagoagents.mobile.call.Ringer.createChannels(this)
         com.lagoagents.mobile.voice.Presence.voiceMode = com.lagoagents.mobile.data.AppSettings.get(this).value.voiceMode
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {

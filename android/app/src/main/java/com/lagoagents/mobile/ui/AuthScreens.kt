@@ -1,6 +1,5 @@
 package com.lagoagents.mobile.ui
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,9 +15,11 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -44,9 +45,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -54,7 +56,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.lagoagents.mobile.R
 import com.lagoagents.mobile.data.Profile
 import com.lagoagents.mobile.net.PairingLink
 import com.lagoagents.mobile.net.PinnedTrustManager
@@ -75,16 +76,39 @@ private fun AuthFrame(content: @Composable ColumnScope.() -> Unit) {
     }
 }
 
+/** Lago, Chip and Atlas over a soft glow, the app's name and what this screen is for. */
 @Composable
-fun Brand(subtitle: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(56.dp).clip(RoundedCornerShape(15.dp)).background(Color(0xFF16181B))) {
-            Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.fillMaxSize())
+private fun Hero(subtitle: String, team: Boolean = true) {
+    val glow = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.fillMaxWidth().height(if (team) 128.dp else 112.dp)
+            .background(Brush.radialGradient(listOf(glow, Color.Transparent))), contentAlignment = Alignment.Center) {
+            if (team) PersonaTrio(84.dp) else PersonaFace("lago", Mood.Idle, 92.dp)
         }
-        Spacer(Modifier.size(14.dp))
-        Column {
-            Text("Lago Agents", style = MaterialTheme.typography.headlineSmall)
-            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(10.dp))
+        Text("Lago Agents", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(subtitle, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** The three steps to pair, each with its number. */
+@Composable
+private fun Steps(vararg steps: String) {
+    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            steps.forEachIndexed { i, step ->
+                Row(verticalAlignment = Alignment.Top) {
+                    Box(Modifier.size(26.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center) {
+                        Text("${i + 1}", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.labelLarge)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Text(step, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 3.dp))
+                }
+            }
         }
     }
 }
@@ -154,12 +178,12 @@ fun PairScreen(busy: Boolean, error: String?, onScan: () -> Unit, scanned: Pairi
     }
 
     AuthFrame {
-        Brand("Your agents, from anywhere")
+        Hero("Your agents, from anywhere")
         Spacer(Modifier.height(4.dp))
         Text("Pair with your computer", style = MaterialTheme.typography.titleLarge)
-        Hint("1. Turn Tailscale on, here and on your computer (same account).\n" +
-            "2. On the computer, open Lago Agents, then Phone. Switch it on and press Pair a Phone.\n" +
-            "3. Scan the code it shows, then enter the phone password.")
+        Steps("Turn Tailscale on, here and on your computer (same account).",
+            "On the computer, open Lago Agents, then Phone. Switch it on and press Pair a Phone.",
+            "Scan the code it shows, then enter the phone password.")
 
         if (link != null) {
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
@@ -202,8 +226,13 @@ fun PairScreen(busy: Boolean, error: String?, onScan: () -> Unit, scanned: Pairi
         TextButton(onClick = { manual = !manual; localError = null }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
             Text(if (manual) "Scan the QR code instead" else "Type the address and code instead")
         }
-        Hint("The connection stays inside your Tailscale network and is pinned to your computer's own certificate. " +
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp).padding(top = 2.dp))
+            Spacer(Modifier.width(8.dp))
+            Hint("The connection stays inside your Tailscale network and is pinned to your computer's own certificate. " +
             "The pairing code works once, for ten minutes.")
+        }
     }
 }
 
@@ -212,7 +241,7 @@ fun PairScreen(busy: Boolean, error: String?, onScan: () -> Unit, scanned: Pairi
 fun LoginScreen(profile: Profile, busy: Boolean, error: String?, onLogin: (String) -> Unit, onForget: () -> Unit) {
     var password by rememberSaveable { mutableStateOf("") }
     AuthFrame {
-        Brand("Sign in to your computer")
+        Hero("Welcome back. Sign in to your computer", team = false)
         Spacer(Modifier.height(4.dp))
         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -237,9 +266,12 @@ fun LockScreen(available: Boolean, error: String?, onUnlock: () -> Unit, onUsePa
     AuthFrame {
         Spacer(Modifier.height(48.dp))
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(Modifier.size(72.dp).clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(34.dp))
+            Box(Modifier.size(104.dp)) {
+                PersonaFace("lago", Mood.Idle, 96.dp, Modifier.align(Alignment.Center))
+                Box(Modifier.size(34.dp).align(Alignment.BottomEnd).clip(CircleShape).background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
+                }
             }
             Text("Lago Agents is locked", style = MaterialTheme.typography.titleLarge)
             Text(

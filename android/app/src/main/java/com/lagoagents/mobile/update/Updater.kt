@@ -46,7 +46,8 @@ sealed interface UpdateState {
     data object None : UpdateState
     data class Available(val release: AppRelease, val message: String? = null) : UpdateState
     data class Downloading(val release: AppRelease, val progress: Float) : UpdateState
-    data class Installing(val release: AppRelease) : UpdateState
+    /** `confirm`: Android waits for your OK (its install screen) before it goes on. */
+    data class Installing(val release: AppRelease, val confirm: Intent? = null) : UpdateState
 }
 
 /**
@@ -70,6 +71,7 @@ object Updater {
     const val EXTRA_UPDATE = "update_now"
     private const val NOTIFICATION_ID = 7444
     private const val BACKGROUND_GRACE_MS = 30_000L
+    private const val INSTALL_TIMEOUT_MS = 120_000L
     private const val ALLOW_MESSAGE = "Allow Lago Agents to install updates (the switch on the next screen)."
 
     /** What the computer says is published (from the live feed or a check). */
@@ -117,6 +119,10 @@ object Updater {
 
     /** Download, check and install the announced version. */
     fun start(context: Context, foreground: Boolean) {
+        (_state.value as? UpdateState.Installing)?.confirm?.let { confirm ->  // "Finish": Android's install screen
+            runCatching { context.startActivity(Intent(confirm).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            return
+        }
         val release = (_state.value as? UpdateState.Available)?.release ?: return
         val app = context.applicationContext
         if (!app.packageManager.canRequestPackageInstalls()) {
@@ -136,6 +142,12 @@ object Updater {
                 verify(app, apk, release)
                 _state.value = UpdateState.Installing(release)
                 install(app, apk, release)
+                // Android answers within seconds, or asks for your OK. Silence means it gave up
+                // without saying (some phones' own installers do): offer the update again.
+                delay(INSTALL_TIMEOUT_MS)
+                val now = _state.value
+                if (now is UpdateState.Installing && now.release.code == release.code && now.confirm == null)
+                    failed(app, release, "The update didn't finish. Tap Update to try again.")
             } catch (error: Exception) {
                 val message = when (error) {
                     is LagoException.Unreachable -> "Couldn't download it: your computer isn't reachable."
@@ -144,6 +156,12 @@ object Updater {
                 failed(app, release, message)
             }
         }
+    }
+
+    /** Android needs your OK to install: the banner's button becomes Finish. */
+    fun waitingForOk(confirm: Intent) {
+        val now = _state.value as? UpdateState.Installing ?: return
+        _state.value = now.copy(confirm = confirm)
     }
 
     fun failed(context: Context, release: AppRelease?, message: String) {

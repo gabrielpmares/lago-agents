@@ -513,6 +513,8 @@ function navigate() {
     if (a.dataset.view === navName) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   });
+  const more = byId("nav-more");
+  if (more) more.toggleAttribute("aria-current", !PHONE_TABS.includes(navName) && Boolean(document.querySelector(`.nav-extra a[data-view="${navName}"]`)));
   if (!["agent", "work", "project", "orchestrator", "phone"].includes(view)) bridge.call("hide_terminal").catch(() => {});
   const main = byId("main");
   const container = h("div", { class: "view view-enter" });
@@ -2721,7 +2723,7 @@ views.permissions = (root, alive) => {
         h("div", { class: "dialog-actions" }, h("button", { type: "button", class: "btn ghost", onclick: () => close(null) }, "Cancel"),
           h("button", { type: "submit", class: "btn primary" }, icon("key"), "Give It")));
     });
-    body.replaceChildren(
+    fill(body,
       asks.pending.length ? h("section", { class: "section" },
         h("div", { class: "section-head" }, h("h2", {}, `Agents asking for a secret (${asks.pending.length})`)),
         h("div", { class: "rows" }, asks.pending.map((r) => h("div", { class: "row" },
@@ -5195,6 +5197,8 @@ views.orchestrator = (root, alive) => {
     const modeButton = (value) => h("button", { type: "button", class: "btn small", "aria-pressed": String(data.mode === value), title: LAGO_MODES[value][1],
       onclick: data.mode === value ? null : act(() => bridge.call("set_lago_mode", { mode: value })) }, LAGO_MODES[value][0]);
     fill(tools,
+      state.remote && featureOn("voice") ? h("button", { class: "btn primary small", title: `Talk to ${lagoName()} hands-free, like a phone call`,
+        onclick: () => bridge.call("call_open").catch((error) => toast(error.message, "error")) }, icon("phone"), "Call") : null,
       h("div", { class: "mode-switch", role: "group", "aria-label": "How much Lago decides" }, modeButton("check"), modeButton("decide")),
       !running ? h("button", { class: "btn primary small", onclick: (e) => startLago(e.currentTarget, data.skip_permissions) }, icon("power"),
         data.skip_permissions ? "Wake Unrestricted" : "Wake Lago") : null,
@@ -5268,7 +5272,8 @@ views.orchestrator = (root, alive) => {
     fill(chat, earlier,
       !messages.length && !thinking ? h("div", { class: "chat-empty" },
         h("strong", {}, `Hi${data.user_name ? `, ${data.user_name}` : ""}. Tell me what to work on.`),
-        h("span", {}, data.mic ? ["Press ", h("kbd", {}, "Ctrl"), " ", h("kbd", {}, "Space"), " and talk, or type below. For example: "] : "Type below. For example: ",
+        h("span", {}, data.mic && !state.remote ? ["Press ", h("kbd", {}, "Ctrl"), " ", h("kbd", {}, "Space"), " and talk, or type below. For example: "]
+          : data.mic ? "Tap the microphone and talk, or type below. For example: " : "Type below. For example: ",
           `“${exampleRequest()}”`)) : null,
       messages,
       thinking ? working() : null,
@@ -5533,6 +5538,7 @@ views.orchestrator = (root, alive) => {
 
   function settingsDialog() {
     const v = structuredClone(data.voice);
+    const c = structuredClone(data.calls);
     let skip = data.skip_permissions;
     let model = data.model;
     const MODEL_NOTES = { haiku: "Cheapest and fastest. Fine for relaying, poor at keeping the thread.",
@@ -5588,6 +5594,7 @@ views.orchestrator = (root, alive) => {
             if (model !== data.model) await bridge.call("set_lago_model", { model });
             await bridge.call("set_skip_permissions", { on: skip });
             if (voiceOn) await bridge.call("save_voice", { settings: v });
+            if (voiceOn) await bridge.call("save_calls", { settings: c });
             return { ok: true, message: "Saved." };
           })) { close(true); lastTools = ""; load(); }
         } },
@@ -5618,7 +5625,18 @@ views.orchestrator = (root, alive) => {
         field("Voice effect", effectSelect, "Played on top of the voice. Not available for eSpeak."),
         h("div", { class: "inline-row", style: "grid-template-columns:1fr 1fr" }, field("Quiet from", from), field("Quiet until", to)),
         h("p", { class: "help faint", style: "margin-top:-8px;font-size:12.5px" }, "During quiet hours nothing is spoken. Leave both empty for none."),
-        h("div", { class: "field" }, h("span", { class: "label" }, "Speak when a session"), kinds)] : null,
+        h("div", { class: "field" }, h("span", { class: "label" }, "Speak when a session"), kinds),
+        h("h3", { class: "section-title" }, "Phone Calls"),
+        h("p", { class: "help faint", style: "font-size:12.5px" }, `Call ${lagoName()} from the phone app's Lago page. He talks in the voice above; say "let me talk to Chip" (or another name) to hand the call over.`),
+        switchRow("Ring my phone when something needs me and nobody has dealt with it", c.ring, (on) => { c.ring = on; }),
+        field("Ring after", h("select", { id: "c-wait", class: "select", onchange: (e) => { c.wait_minutes = Number(e.target.value); } },
+          [5, 10, 20, 30, 60].map((m) => h("option", { value: m, selected: m === c.wait_minutes }, `${m} minutes waiting`))),
+          "Most things are dealt with before then, by you or by him. Never in the quiet hours, at most three calls an hour."),
+        h("div", { class: "field" }, h("span", { class: "label" }, "Ring for"), h("div", { class: "app-list", style: "max-height:none" },
+          [["stuck", "pause-circle", "Stuck: blocked, waiting, failed or asking"], ["decisions", "seal-question", "Decisions: a plan, a permission, a budget"],
+            ["crashes", "warning-octagon", "Crashes"], ["finished", "flag-checkered", "Finished work"]].map(([k, ic, label]) =>
+            h("label", { class: "app-option" }, h("input", { type: "checkbox", checked: c.kinds.includes(k),
+              onchange: (e) => { c.kinds = e.target.checked ? [...c.kinds, k] : c.kinds.filter((x) => x !== k); } }), icon(ic), label))))] : null,
         h("div", { class: "dialog-actions" },
           voiceOn ? h("button", { type: "button", class: "btn ghost", style: "margin-right:auto", onclick: (e) => runAction(e.currentTarget, () => bridge.call("test_voice", { settings: v })) }, icon("play"), "Test") : null,
           h("button", { type: "button", class: "btn ghost", onclick: () => close(false) }, "Cancel"),
@@ -5663,6 +5681,9 @@ views.orchestrator = (root, alive) => {
   if (state.talkOnOpen) { state.talkOnOpen = false; talk.toggle(); }
 };
 
+/* The phone has no Shift+Enter to explain. */
+const messagePlaceholder = () => state.remote ? "Message Lago…" : "Message Lago… (Enter sends, Shift+Enter for a new line)";
+
 /* What you say to Lago: typed (Enter sends) or spoken (the big microphone button or
    Ctrl+Space, again to stop). Speech is transcribed on this machine. Pictures, PDFs and
    text files come along from the paperclip, Ctrl+V or dragging them in; Lago opens each
@@ -5675,7 +5696,7 @@ function talkBox({ onSent, onPhase }) {
   let autoSend = true;
   try { autoSend = localStorage.getItem("lago.talk.autosend") !== "0"; } catch { /* default */ }
   const text = h("textarea", { class: "input", rows: 1, "aria-label": "Message to Lago",
-    placeholder: "Message Lago… (Enter sends, Shift+Enter for a new line)",
+    placeholder: messagePlaceholder(),
     oninput: () => grow(),
     onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } },
     onpaste: (e) => paste(e) });
@@ -5865,7 +5886,7 @@ function talkBox({ onSent, onPhase }) {
     el, toggle, edit,
     phase: () => phase,
     setAvailable(on) { micButton.hidden = !on; autoSwitch.hidden = !on; hint.hidden = !on; },
-    setPlaceholder(value) { text.placeholder = value || "Message Lago… (Enter sends, Shift+Enter for a new line)"; },
+    setPlaceholder(value) { text.placeholder = value || messagePlaceholder(); },
     close() {
       clearInterval(timer);
       state.lagoRecording = false;
@@ -7279,6 +7300,34 @@ function applyTheme(theme) {
   document.querySelector('meta[name="theme-color"]').setAttribute("content", bg);
 }
 
+/* The phone: a few pages in the tab bar and the rest under More, a sheet; New Task and the
+   bell move up to the top bar, which stays on even without open work sessions. */
+const PHONE_TABS = ["orchestrator", "overview", "tasks", "projects"];
+
+function phoneChrome() {
+  const topbar = document.querySelector(".topbar");
+  const newTask = h("button", { type: "button", class: "btn icon ghost topbar-new", title: "New Task", "aria-label": "New Task",
+    onclick: () => newTaskDialog() }, icon("plus-circle"));
+  topbar.append(newTask, document.querySelector(".bell-wrap"));
+  document.querySelectorAll(".nav a[data-view]").forEach((a) => {
+    if (!PHONE_TABS.includes(a.dataset.view)) a.closest("li").classList.add("nav-extra");
+  });
+  document.querySelector(".nav").append(h("li", { class: "nav-more" },
+    h("button", { type: "button", id: "nav-more", onclick: () => moreSheet() }, icon("dots-three-outline"), "More")));
+}
+
+function moreSheet() {
+  const pages = [...document.querySelectorAll(".nav li.nav-extra:not([hidden], .nav-phone) a[data-view]")];
+  return openDialog((close) => h("form", { method: "dialog", class: "more-sheet" },
+    h("h2", {}, "More"),
+    h("div", { class: "more-grid" }, pages.map((a) => h("a", {
+        href: a.getAttribute("href"), class: "more-item", "aria-current": a.getAttribute("aria-current"),
+        onclick: () => close(true) },
+      a.querySelector(".ph").cloneNode(), a.firstElementChild.nextSibling.textContent.trim()))),
+    byId("features-link") && !byId("features-link").hidden ? h("button", { type: "button", class: "btn ghost more-features",
+      onclick: () => { close(true); featuresDialog(); } }, icon("puzzle-piece"), "Features") : null));
+}
+
 /* The Auto / Light / Dark switch under the sidebar. */
 function appearanceSwitch(current) {
   const group = byId("appearance");
@@ -7322,6 +7371,7 @@ function appearanceSwitch(current) {
       featuresLink.addEventListener("click", () => featuresDialog());
     }
     if (!state.remote) appearanceSwitch(init.appearance || "auto");
+    else phoneChrome();
     await pollLive();
     setInterval(() => { if (document.visibilityState === "visible") pollLive(); }, 2000);
     refreshAccountChip();

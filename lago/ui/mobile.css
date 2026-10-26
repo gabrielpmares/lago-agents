@@ -23,21 +23,20 @@
   padding: 0 4px; border-right: 0; border-top: 1px solid var(--border);
   height: var(--tabbar); background: var(--surface);
 }
-.remote .nav {
-  display: flex; flex-wrap: nowrap; gap: 0; flex: 1; min-width: 0; margin: 0; padding: 0; overflow-y: hidden;
-  overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity;
+.remote .nav { display: flex; flex-wrap: nowrap; gap: 0; flex: 1; min-width: 0; margin: 0; padding: 0; overflow: hidden; }
+/* Four pages and More; the rest are in the More sheet (phoneChrome in app.js). */
+.remote .nav-label, .remote .nav-new, .remote .nav-extra { display: none !important; }
+.remote .nav li { flex: 1 1 0; min-width: 0; }
+.remote .nav a, .remote .nav-more button {
+  position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  padding: 6px 2px; border: 0; border-radius: 0; background: transparent; color: var(--text-2);
+  font: inherit; font-size: 11px; font-weight: 550; letter-spacing: 0.01em; white-space: nowrap; text-align: center; cursor: pointer;
 }
-.remote .nav::-webkit-scrollbar { display: none; }
-.remote .nav li { flex: 1 0 64px; scroll-snap-align: start; }
-.remote .nav a {
-  position: relative; height: 100%; flex-direction: column; justify-content: center; gap: 3px;
-  padding: 6px 2px; border-radius: 0; font-size: 11px; font-weight: 550; letter-spacing: 0.01em;
-  white-space: nowrap; text-align: center;
-}
-.remote .nav a .ph { font-size: 22px; }
+.remote .nav a .ph, .remote .nav-more .ph { font-size: 22px; }
 .remote .nav a:hover { background: transparent; }
-.remote .nav a[aria-current="page"] { background: transparent; color: var(--accent); }
-.remote .nav a[aria-current="page"]::before {
+.remote .nav a[aria-current="page"], .remote .nav-more button[aria-current] { background: transparent; color: var(--accent); }
+.remote .nav a[aria-current="page"] .ph, .remote .nav-more button[aria-current] .ph { color: var(--accent); }
+.remote .nav a[aria-current="page"]::before, .remote .nav-more button[aria-current]::before {
   content: ""; position: absolute; top: 0; left: 22%; right: 22%; height: 2px; border-radius: 0 0 2px 2px; background: var(--accent);
 }
 .remote .nav-lago { margin: 0; }
@@ -51,6 +50,9 @@
 /* The top bar: open sessions scroll sideways, the bell stays put. */
 .remote .topbar { min-height: var(--topbar); padding: 4px 8px 0 12px; }
 .remote .session-tab { max-width: 180px; height: 38px; }
+.remote .topbar:has(.session-tabs:empty) { display: flex; }  /* New Task and the bell live here */
+.remote .topbar-new { flex: none; width: 44px; height: 44px; font-size: 22px; color: var(--accent); padding-bottom: 0; }
+.remote .topbar .bell-wrap { padding-bottom: 0; }
 .remote .bell { width: 44px; height: 44px; }
 .remote .notifications { position: fixed; left: 8px; right: 8px; top: calc(var(--topbar) + 4px); width: auto; max-height: calc(var(--app-h, 100dvh) - var(--topbar) - var(--tabbar) - 20px); }
 .remote .note-dismiss { opacity: 1; width: 34px; height: 34px; }
@@ -74,6 +76,8 @@
 .remote .switch[aria-checked="true"]::after { transform: translateX(18px); }
 .remote .segmented { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .remote .segmented button { height: 36px; white-space: nowrap; }
+.remote .page-tabs { width: auto; max-width: 100%; flex-wrap: nowrap; }
+.remote .page-tabs a { flex: none; white-space: nowrap; }
 .remote .menu button { padding: 12px 12px; }
 
 /* Rows: actions drop under the text instead of squeezing it. */
@@ -101,6 +105,16 @@
 
 .remote .toasts { left: 12px; right: 12px; bottom: calc(var(--tabbar) + 12px); justify-items: stretch; }
 
+/* More: every other page, two to a row. */
+.remote .more-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 4px 0 12px; }
+.remote .more-item {
+  display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: var(--r-control); background: var(--surface); color: var(--text); text-decoration: none; font-weight: 550;
+}
+.remote .more-item .ph { font-size: 20px; color: var(--accent); flex: none; }
+.remote .more-item[aria-current="page"] { border-color: var(--accent-line); background: var(--accent-soft); }
+.remote .more-features { width: 100%; }
+
 /* ---------------------------------------------------------------- Talk to Lago */
 
 .remote .view.lago-view { height: auto; padding: 8px 10px 0; }
@@ -111,7 +125,11 @@
 .remote .lago-title h1 { font-size: 19px; }
 .remote .lago-mood { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .remote .lago-title { flex: 1; }
-.remote .lago-tools { flex-wrap: nowrap; overflow-x: auto; max-width: 52%; scrollbar-width: none; }
+/* His buttons get a row of their own under his name, scrolling sideways if they must. */
+.remote .lago-hero { flex-wrap: wrap; row-gap: 6px; }
+.remote .lago-tools { order: 3; flex: 1 0 100%; flex-wrap: nowrap; justify-content: flex-start; margin-left: 0; overflow-x: auto; scrollbar-width: none; }
+.remote .lago-tools::-webkit-scrollbar { display: none; }
+.remote .lago-tools > * { flex: none; }
 .remote .chat { min-height: 0; max-height: none; padding: 12px 2px; }
 .remote .msg { max-width: 92%; }
 .remote .lago-composer { column-gap: 10px; padding: 8px 0 10px; }
@@ -127,4 +145,7 @@
 .remote .catalog-grid, .remote .project-grid, .remote .team-form, .remote .team-form.wide { grid-template-columns: 1fr; }
 .remote .area-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .remote .account-body { grid-template-columns: 1fr; }
+.remote .provider-row { flex-wrap: wrap; }
+.remote .provider-row .row-main { flex: 1 1 calc(100% - 48px); min-width: 0; }
+.remote .provider-row .row-actions { flex-basis: 100%; padding-left: 36px; }
 .remote .score-head, .remote .prompt-compare { grid-template-columns: 1fr; }

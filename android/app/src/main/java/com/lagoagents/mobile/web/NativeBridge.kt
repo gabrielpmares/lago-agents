@@ -89,6 +89,12 @@ class NativeBridge(
                 ok(JSONObject().put("ok", true).put("message", "Opened full screen."))
             }
             "clipboard_files" -> ok(JSONObject().put("files", org.json.JSONArray()))
+            "call_open" -> {
+                // From the unlocked app: the call screen needn't ask for the app's lock again.
+                activity.startActivity(android.content.Intent(activity, com.lagoagents.mobile.call.CallActivity::class.java)
+                    .putExtra(com.lagoagents.mobile.call.CallActivity.EXTRA_TRUSTED, true))
+                ok(JSONObject().put("ok", true))
+            }
             "mic_start" -> {
                 if (!askMic()) return fail("Allow the microphone for Lago Agents to talk to Lago")
                 withContext(Dispatchers.Main) { speech.start() }

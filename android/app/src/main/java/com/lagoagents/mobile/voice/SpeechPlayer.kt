@@ -11,6 +11,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -29,6 +32,8 @@ object Presence {
  * and chime as at the desk) but, while you're on the phone, writes it to a file instead of
  * its speakers; the live connection announces each one and this downloads and plays them in
  * order, ducking music while Lago talks. A hush on the computer stops it here too.
+ * During a phone call ([callAudio]) it plays as a call does, through the earpiece or speaker
+ * the call chose, and [busy] tells the call when to stop listening.
  */
 object SpeechPlayer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -39,6 +44,12 @@ object SpeechPlayer {
     @Volatile private var playing: CompletableDeferred<Unit>? = null
     @Volatile private var hushedAt = 0L
     private var started = false
+    private val waiting = java.util.concurrent.atomic.AtomicInteger()
+    private val _busy = MutableStateFlow(false)
+    /** Something is being played or waits to be. */
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+    /** On a call: play as voice communication (the earpiece or speaker the call routed to). */
+    @Volatile var callAudio = false
 
     /** What the live connection says is waiting. */
     @Synchronized
@@ -49,7 +60,10 @@ object SpeechPlayer {
         start(context.applicationContext)
         for (i in 0 until speech.length()) {
             val id = speech.getJSONObject(i).optString("id")
-            if (id.isNotEmpty() && known.add(id)) queue.trySend(id to System.currentTimeMillis())
+            if (id.isNotEmpty() && known.add(id)) {
+                _busy.value = waiting.incrementAndGet() > 0
+                queue.trySend(id to System.currentTimeMillis())
+            }
         }
         while (known.size > 200) known.remove(known.first())
     }
@@ -60,6 +74,7 @@ object SpeechPlayer {
         scope.launch {
             for ((id, at) in queue) {
                 runCatching { play(context, id, at) }
+                _busy.value = waiting.decrementAndGet() > 0
                 runCatching { Session.client(context)?.call("speech_done", JSONObject().put("id", id)) }
             }
         }
@@ -84,7 +99,7 @@ object SpeechPlayer {
     private suspend fun playFile(context: Context, file: File) {
         val audio = context.getSystemService(AudioManager::class.java)
         val attributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+            .setUsage(if (callAudio) AudioAttributes.USAGE_VOICE_COMMUNICATION else AudioAttributes.USAGE_ASSISTANT)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build()
         val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)

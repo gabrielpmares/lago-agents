@@ -38,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -117,6 +118,29 @@ fun SettingsScreen(
                                 Text(title, style = MaterialTheme.typography.bodyLarge)
                                 Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                        }
+                    }
+                }
+
+                Section("Calls") {
+                    val context = LocalContext.current
+                    Text("Call Lago from his page, or long-press the app icon. He rings you when something has waited too long; " +
+                        "choose when in Lago's Settings on the computer.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 8.dp))
+                    if (!prefs.instantAlerts) {
+                        Text("He can only ring you while Live alerts are on.", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(vertical = 8.dp))
+                    }
+                    if (!com.lagoagents.mobile.call.Ringer.canRingFullScreen(context)) {
+                        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Allow his calls to show full screen, over the lock screen, like a phone call.",
+                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.weight(1f).padding(end = 8.dp))
+                            OutlinedButton(onClick = {
+                                runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                                    android.net.Uri.parse("package:${context.packageName}"))) }
+                            }, shape = RoundedCornerShape(10.dp)) { Text("Allow") }
                         }
                     }
                 }

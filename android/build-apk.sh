@@ -56,7 +56,7 @@ fi
 prop() { sed -n "s/^$1=//p" version.properties; }
 BUILD=$(prop build)
 if [ "$PUBLISH" = 1 ]; then
-    PUBLISHED=$(python3 -c "import sys; sys.path.insert(0, '..'); import remote; i = remote.app_info(); print(i['code'] if i else 0)")
+    PUBLISHED=$(python3 -c "import sys; sys.path.insert(0, '../lago'); import remote; i = remote.app_info(); print(i['code'] if i else 0)")
     # Always past both the last published and the last built version: a phone may run a
     # build that was installed by hand and never published.
     NEXT=$(( (BUILD > PUBLISHED ? BUILD : PUBLISHED) + 1 ))
