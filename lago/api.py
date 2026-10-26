@@ -1150,8 +1150,15 @@ class Api:
         return {"ok": True, "message": "Refreshing from GitHub: it takes a few minutes."
                 if started else "Already refreshing."}
 
-    def import_github_agent(self, repo, notes=""):
-        done = _call(lambda: ghcatalog.import_repo(repo, notes))
+    def import_github_agent(self, repo, notes="", careful=False):
+        """careful: through the builder for this repo only, whatever the setting says."""
+        import ghimport
+        try:
+            done = _call(lambda: ghcatalog.import_repo(repo, notes, bool(careful)))
+        except ApiError as error:
+            if not isinstance(error.__cause__, ghimport.NeedsBuilder):
+                raise
+            return {"ok": False, "can_build": True, "message": str(error)}
         if isinstance(done, str):
             return {"ok": True, "message": done}
         return {"ok": True, "message": f"The GitHub Agent Builder is checking {repo} (task "

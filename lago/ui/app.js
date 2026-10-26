@@ -3360,7 +3360,7 @@ views.find = (root, alive) => {
               ? "Careful import: the GitHub Agent Builder checks it for security problems and tests it in a throwaway sandbox. If it passes, a draft appears on the Agents tab for you to approve." + risky
               : "Lago fetches it, checks its files, and installs its agents, skills or MCP server. You can switch any of them off on the Agents tab." + risky,
             confirm: careful ? "Check and Draft" : "Import" });
-          if (ok) await runAction(e.currentTarget, () => bridge.call("import_github_agent", { repo: c.repo })).then((done) => { if (done) { if (!careful) refreshCatalog(); load(); } });
+          if (ok) await importIt(c, e.currentTarget);
         } }, icon("download-simple"), "Import")),
       c.have && (c.have.agents.length || c.have.skills.length) ? h("p", { class: "faint", style: "font-size:12px;margin:2px 0 4px" }, icon("check-circle"), " Yours: ",
         [...c.have.agents.map((id) => h("a", { href: `#swarm/${id}` }, id)), ...c.have.skills.map((n) => h("span", {}, `skill ${n}`))]
@@ -3369,7 +3369,25 @@ views.find = (root, alive) => {
       s.what ? h("p", { class: "faint", style: "font-size:12px;margin:4px 0 0" }, `Needs: ${s.needs} · Produces: ${s.produces} · Risk: ${s.risk}`) : null);
   };
 
-  const importIt = (c) => runAction(null, () => bridge.call("import_github_agent", { repo: c.repo })).then((done) => { if (done) { if (!careful) refreshCatalog(); load(); } });
+  // When Lago can't install it in one step, offer the builder for this repo only: the setting stays as it is.
+  const importIt = async (c, button = null, carefully = false) => {
+    let res;
+    if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); }
+    try { res = await bridge.call("import_github_agent", { repo: c.repo, careful: carefully }); }
+    catch (error) { toast(error.message, "error"); return; }
+    finally { if (button && button.isConnected) { button.disabled = false; button.removeAttribute("aria-busy"); } }
+    if (res && res.can_build) {
+      const again = await confirmDialog({ title: `Build ${c.repo} carefully?`,
+        body: `${res.message} The GitHub Agent Builder can look deeper and build it instead: it checks it for security problems, tests it in a throwaway sandbox, and leaves a draft on the Agents tab for you to approve. Just this once: Careful import stays off.`,
+        confirm: "Build It" });
+      if (again) await importIt(c, button, true);
+      return;
+    }
+    if (res && res.ok === false) { toast(res.message || "That didn't work.", "error"); return; }
+    toast((res && res.message) || "Done.");
+    if (!(careful || carefully)) refreshCatalog();
+    load();
+  };
 
   // What you already have of a repo, instead of an Import button.
   const haveButton = (have) => have.agents.length || have.skills.length ? h("span", { class: "pill solved" }, icon("check"), "Imported")

@@ -618,12 +618,17 @@ ORCHESTRATOR_TOOLS = {
     "import_github_agent": {
         "description": "Install a repo from github_agents: Lago fetches it at a pinned "
                        "commit, checks its files and installs its agents, skills or MCP server "
-                       "(with the careful import switched on in Settings, it becomes a draft "
-                       "the human approves instead). Only after the human said yes to importing "
-                       "this repo, in either mode.",
+                       "(with the careful import switched on in Settings, or careful: true, it "
+                       "becomes a draft the human approves instead). If it says Lago couldn't "
+                       "install it in one step, offer the careful import for this repo and call "
+                       "again with careful: true when they agree. Only after the human said yes "
+                       "to importing this repo, in either mode.",
         "inputSchema": _schema({"repo": {"type": "string", "description": "owner/name"},
                                 "notes": {"type": "string", "description": "What they want "
-                                          "it for."}}, ["repo"]),
+                                          "it for."},
+                                "careful": {"type": "boolean", "description": "Through the "
+                                            "builder's sandbox test, for this repo only."}},
+                               ["repo"]),
     },
     "create_agent": {
         "description": "When no agent the human has, and nothing on GitHub, fits a job that "
@@ -1559,8 +1564,8 @@ def tool_explain_github_agent(repo):
             + (f"\nThey already have: {', '.join(d['similar'])}." if d["similar"] else ""))
 
 
-def tool_import_github_agent(repo, notes=""):
-    done = ghcatalog.import_repo(github.repo_name(repo) or repo.strip(), notes)
+def tool_import_github_agent(repo, notes="", careful=False):
+    done = ghcatalog.import_repo(github.repo_name(repo) or repo.strip(), notes, bool(careful))
     if isinstance(done, str):
         return done + " Tell them in a line; it can be used now (find_agents shows it)."
     return (f"The github-agent-builder is checking it (task #{done}). Its draft waits for the "

@@ -576,11 +576,12 @@ def refresh_later():
     return True
 
 
-def import_repo(repo, notes=""):
+def import_repo(repo, notes="", careful=False):
     """Import a listed repo. Normally in one step (ghimport.py: fetch, check the files,
     install), returning a line saying what was installed. With the careful import on
-    (swarm.careful_import), the github-agent-builder pins the commit, runs the security gate
-    and a sandbox test, and drafts the agent for your approval; that returns its task id."""
+    (swarm.careful_import, or `careful` for this repo only), the github-agent-builder pins the
+    commit, runs the security gate and a sandbox test, and drafts the agent for your approval;
+    that returns its task id."""
     card = get(repo)
     if card is None:
         raise TeamError(f"{repo} isn't in Lago's GitHub list (it needs an open-source license).")
@@ -594,7 +595,7 @@ def import_repo(repo, notes=""):
             line = ghimport.import_repo(shared[0]["repo"], "lago")
             return (f"{line} It's the shared Lago build of {repo} ({shared[0]['repo']}, "
                     f"★{shared[0]['stars']}), so you get the same agent other people use.")
-    if not ghimport.careful():
+    if not (careful or ghimport.careful()):
         return ghimport.import_repo(repo, card["kind"])
     pinned = f"{repo}@{card['sha']}" if card["sha"] else repo
     task_id, _, _ = swarm.run_agent(
