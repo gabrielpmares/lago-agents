@@ -137,21 +137,23 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(company.member("ann@acme.com")["status"], "pending")
         self.assertIn("asked to join", self.get("/")[1])
 
-    def test_the_join_form_works_from_a_browser_but_not_from_elsewhere(self):
-        def ask(headers):
+    def test_the_join_page_lets_its_form_send_its_origin(self):
+        # Under no-referrer, Chromium posts the form with "Origin: null", and over plain http on
+        # the tailnet there's no Sec-Fetch-Site to tell it apart from another site's form
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/") as r:
+            self.assertEqual(r.headers.get_all("Referrer-Policy"), ["same-origin"])
+        def ask(origin):
             req = urllib.request.Request(f"http://127.0.0.1:{self.port}/v1/request", method="POST", data=b"",
-                                         headers=headers)
+                                         headers={"Origin": origin})
             try:
                 with urllib.request.urlopen(req) as r:
                     return r.status
             except urllib.error.HTTPError as e:
                 return e.code
-        # Chromium sends "Origin: null" for a form post under Referrer-Policy: no-referrer
-        self.assertEqual(ask({"Origin": "null", "Sec-Fetch-Site": "cross-site"}), 403)
-        self.assertEqual(ask({"Origin": "null"}), 403)
-        self.assertEqual(ask({"Origin": "http://evil.example"}), 403)
+        self.assertEqual(ask("null"), 403)
+        self.assertEqual(ask("http://evil.example"), 403)
         self.assertIsNone(company.member("ann@acme.com"))
-        self.assertEqual(ask({"Origin": "null", "Sec-Fetch-Site": "same-origin"}), 200)
+        self.assertEqual(ask(f"http://127.0.0.1:{self.port}"), 200)
         self.assertEqual(company.member("ann@acme.com")["status"], "pending")
 
     def test_people_kept_out_see_nothing_even_if_once_let_in(self):

@@ -1014,8 +1014,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
-        for k, v in (extra or {}).items():
+        extra = {"Referrer-Policy": "no-referrer", **(extra or {})}
+        for k, v in extra.items():
             self.send_header(k, v)
         self.end_headers()
         if self.command != "HEAD":
@@ -1366,7 +1366,9 @@ class WebHandler(Handler):
         if path in ("/", "/index.html"):
             if not self.allowed_person(who):
                 member = company.member(who["login"]) if who else None
-                return self.send_bytes(200, _join_page(who, member), "text/html; charset=utf-8")
+                # same-origin, not no-referrer: under no-referrer the Ask to Join form posts "Origin: null"
+                return self.send_bytes(200, _join_page(who, member), "text/html; charset=utf-8",
+                                       {"Referrer-Policy": "same-origin"})
             return self.send_bytes(200, _web_index(), "text/html; charset=utf-8", {"Content-Security-Policy": WEB_CSP})
         if path.startswith("/v1/attachments/"):
             if not self.allowed_person(who):
@@ -1382,10 +1384,6 @@ class WebHandler(Handler):
         if not self.host_ok():
             return self.error(421, "Wrong host")
         origin = self.headers.get("Origin")
-        # Under our no-referrer policy a plain form post (Ask to Join) carries "Origin: null";
-        # the browser's own Sec-Fetch-Site still says whether it came from this page.
-        if origin == "null" and self.headers.get("Sec-Fetch-Site") == "same-origin":
-            origin = None
         if origin and urlsplit(origin).hostname not in self.server.names:
             return self.error(403, "Wrong origin")
         path = urlsplit(self.path).path
