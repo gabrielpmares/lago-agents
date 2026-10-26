@@ -1382,6 +1382,10 @@ class WebHandler(Handler):
         if not self.host_ok():
             return self.error(421, "Wrong host")
         origin = self.headers.get("Origin")
+        # Under our no-referrer policy a plain form post (Ask to Join) carries "Origin: null";
+        # the browser's own Sec-Fetch-Site still says whether it came from this page.
+        if origin == "null" and self.headers.get("Sec-Fetch-Site") == "same-origin":
+            origin = None
         if origin and urlsplit(origin).hostname not in self.server.names:
             return self.error(403, "Wrong origin")
         path = urlsplit(self.path).path
