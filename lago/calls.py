@@ -32,6 +32,7 @@ import time
 
 import config_store
 import features
+import languages
 import notify
 import personas
 from config_store import STATE_DIR
@@ -56,12 +57,17 @@ KIND_GROUPS = {
 }
 DEFAULTS = {"ring": True, "wait_minutes": 10, "kinds": ["stuck", "decisions", "crashes"]}
 
-# "Let me talk to Chip", "put Atlas on", "switch to Lago", "Hey Chip, ...".
+# "Let me talk to Chip", "put Atlas on", "switch to Lago", "Hey Chip, ...", and in Portuguese
+# and Spanish: "quero falar com a Marina", "passa-me o Chip", "olá Ada", "hablar con Iris".
 SWITCH = (r"\b(?:talk|speak|chat)\s+(?:to|with)\s+({names})\b",
           r"\b(?:put|get|bring)\s+({names})\s+on\b",
           r"\bswitch\s+(?:me\s+)?(?:over\s+)?to\s+({names})\b",
           r"\bis\s+({names})\s+(?:there|around)\b",
-          r"^\W*(?:hey|hi|hello|ok|okay)\W+({names})\b")
+          r"^\W*(?:hey|hi|hello|ok|okay)\W+({names})\b",
+          r"\b(?:falar|conversar)\s+com\s+(?:[oa]\s+)?({names})\b",
+          r"\bpassa(?:-me)?\s+(?:[oa]\s+)?({names})\b",
+          r"^\W*(?:olá|ola|oi|ei)\W+(?:[oa]\s+)?({names})\b",
+          r"\b(?:hablar|platicar)\s+con\s+({names})\b")
 
 # What Claude Code shows when it can't answer, and what he says about it.
 TROUBLE = ((re.compile(r"overloaded|\b529\b", re.I), "Claude's servers are overloaded, and I'm retrying"),
@@ -120,10 +126,17 @@ def _persona(config):
 
 
 def public(call):
-    """What the phone gets: no more than it shows."""
+    """What the phone gets: no more than it shows, and the language to listen in (a BCP 47 tag,
+    "" for the phone's own). On a call, the persona is whoever Lago is now, however he was
+    switched (a phrase, the app, or his own use_persona)."""
     if not call:
         return None
-    return {k: call.get(k) for k in ("id", "state", "persona", "reason", "at")}
+    config = config_store.load()
+    out = {k: call.get(k) for k in ("id", "state", "persona", "reason", "at")}
+    if call.get("state") == "active":
+        out["persona"] = _persona(config)
+    out["language"] = languages.tag(languages.chosen(config.get("voice")))
+    return out
 
 
 def start(reason=None):

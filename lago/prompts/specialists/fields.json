@@ -1,0 +1,103 @@
+{
+  "IT & Software": {
+    "Backend Engineering": {
+      ".NET Backend Engineer": [".NET cloud engineer on Azure (Bicep, AKS, Cosmos DB, Service Bus, Event Hub, Azure DevOps)", ".NET microservices on Kubernetes", "ASP.NET Core APIs and SQL Server", ".NET on AWS"],
+      "Java Backend Engineer": ["Spring Boot microservices on Kubernetes", "Java on AWS (ECS, Lambda, DynamoDB, SQS)", "Event-driven Java with Kafka", "Quarkus / Micronaut cloud-native"],
+      "Python Backend Engineer": ["Django and PostgreSQL", "FastAPI services on AWS", "Python data APIs and async workers (Celery, Redis)"],
+      "Node.js Backend Engineer": ["NestJS / Express APIs", "Serverless Node on AWS Lambda", "Node with GraphQL and PostgreSQL"],
+      "Go Backend Engineer": ["Go microservices and gRPC", "Go cloud infrastructure tooling", "High-throughput Go services"],
+      "Rust Backend Engineer": ["Rust web services (Axum, Tokio)", "Rust systems and performance-critical services"],
+      "PHP Backend Engineer": ["Laravel", "Symfony", "WordPress and WooCommerce development"],
+      "Ruby Backend Engineer": ["Ruby on Rails"],
+      "API & Integration Engineer": ["REST and OpenAPI design", "GraphQL APIs", "Enterprise integration (iPaaS, ESB, webhooks)"]
+    },
+    "Frontend Engineering": {
+      "React Engineer": ["React with Next.js", "React with TypeScript and design systems", "React performance and accessibility"],
+      "Angular Engineer": ["Angular enterprise apps (RxJS, NgRx)"],
+      "Vue Engineer": ["Vue 3 and Nuxt"],
+      "Web Platform Engineer": ["Accessibility (WCAG)", "Web performance and Core Web Vitals", "Design systems and component libraries"]
+    },
+    "Full-Stack Engineering": {
+      "Full-Stack Engineer": ["TypeScript full stack (Next.js, Node, PostgreSQL)", ".NET + React on Azure", "Python + React", "SaaS product engineer (auth, billing, multi-tenancy)"]
+    },
+    "Mobile Engineering": {
+      "Android Engineer": ["Kotlin and Jetpack Compose", "Android platform and performance"],
+      "iOS Engineer": ["Swift and SwiftUI"],
+      "Cross-Platform Mobile Engineer": ["React Native", "Flutter", ".NET MAUI"]
+    },
+    "Cloud & Infrastructure": {
+      "Cloud Engineer": ["Azure cloud engineer (AZ-104 / AZ-305 level)", "AWS cloud engineer (Solutions Architect level)", "Google Cloud engineer", "Multi-cloud and hybrid"],
+      "Cloud Architect": ["Azure solutions architect", "AWS solutions architect", "Cloud cost optimization (FinOps)"],
+      "DevOps Engineer": ["Azure DevOps pipelines and Bicep", "GitHub Actions and Terraform", "GitLab CI and Kubernetes", "Jenkins and on-prem"],
+      "Platform Engineer": ["Kubernetes platform (AKS / EKS / GKE)", "Internal developer platforms (Backstage, golden paths)", "GitOps (Argo CD, Flux)"],
+      "Site Reliability Engineer": ["Observability (Prometheus, Grafana, OpenTelemetry)", "Incident response and SLOs", "Capacity and performance engineering"],
+      "Infrastructure as Code Engineer": ["Terraform / OpenTofu", "Bicep and ARM", "Pulumi", "Ansible configuration management"],
+      "Linux Systems Administrator": ["Linux servers and automation", "Virtualization (Proxmox, VMware)"],
+      "Network Engineer": ["Cloud networking (VNets, VPCs, private endpoints, firewalls)", "Enterprise networking (Cisco, routing, switching)", "Network security and zero trust"]
+    },
+    "Data Engineering & Databases": {
+      "Data Engineer": ["Azure data (Data Factory, Synapse, Fabric, Databricks)", "AWS data (Glue, Redshift, Athena)", "Spark and Databricks", "Streaming (Kafka, Flink, Event Hubs)", "dbt and the modern data stack"],
+      "Database Administrator": ["PostgreSQL", "SQL Server", "Oracle", "MongoDB and NoSQL", "Azure Cosmos DB"],
+      "Analytics Engineer": ["dbt, SQL and semantic layers"],
+      "BI Developer": ["Power BI", "Tableau", "Looker"]
+    },
+    "AI & Machine Learning": {
+      "ML Engineer": ["PyTorch model training and serving", "MLOps (MLflow, Kubeflow, Azure ML, SageMaker)", "Computer vision", "Recommendation systems"],
+      "AI Engineer": ["LLM applications and RAG", "AI agents and tool use", "LLM evaluation and safety"],
+      "Data Scientist": ["Statistics and experimentation", "Forecasting and time series", "Python data science (pandas, scikit-learn)"]
+    },
+    "Security": {
+      "Application Security Engineer": ["Secure code review and OWASP", "DevSecOps (SAST, DAST, supply chain)"],
+      "Cloud Security Engineer": ["Azure security (Defender, Entra ID, Key Vault, policy)", "AWS security (IAM, GuardDuty, KMS)", "Kubernetes security"],
+      "Penetration Tester": ["Web application pentesting", "Network and Active Directory pentesting", "Mobile app pentesting"],
+      "Security Operations Analyst": ["SIEM and threat detection (Sentinel, Splunk)", "Incident response and forensics"],
+      "Identity Engineer": ["Microsoft Entra ID and identity governance", "OAuth 2.0, OpenID Connect and SSO"],
+      "GRC Specialist": ["ISO 27001", "SOC 2", "GDPR and NIS2 compliance"]
+    },
+    "Quality Engineering": {
+      "QA Automation Engineer": ["Playwright / Cypress end-to-end", "API testing", "Mobile test automation"],
+      "Performance Test Engineer": ["k6, JMeter and load testing"]
+    },
+    "Embedded & Systems": {
+      "Embedded Engineer": ["Embedded C on microcontrollers", "Embedded Linux", "IoT devices and cloud (Azure IoT, AWS IoT)"],
+      "Systems Programmer": ["C++ systems", "Operating systems and drivers"]
+    },
+    "Game Development": {
+      "Game Developer": ["Unity (C#)", "Unreal Engine (C++)", "Godot", "Game modding and reverse engineering"]
+    },
+    "Blockchain": {
+      "Smart Contract Engineer": ["Solidity and EVM", "Solana (Rust)", "Smart contract security auditing"]
+    },
+    "Enterprise Platforms": {
+      "Salesforce Developer": ["Apex and Lightning"],
+      "SAP Consultant": ["SAP S/4HANA ABAP", "SAP integration"],
+      "Microsoft 365 / Power Platform Developer": ["Power Apps, Power Automate and Dataverse", "SharePoint and Microsoft Graph"],
+      "Dynamics 365 Developer": ["Dynamics 365 Finance and Operations", "Dynamics 365 CRM"]
+    },
+    "Architecture & Leadership": {
+      "Software Architect": ["Distributed systems and microservices", "Domain-driven design", "Event-driven architecture"],
+      "Engineering Manager": ["Leading engineering teams", "Delivery and process (Scrum, Kanban)"],
+      "Technical Lead": ["Backend tech lead", "Frontend tech lead"]
+    },
+    "Product & Design": {
+      "Product Manager": ["B2B SaaS product manager", "Technical / platform product manager"],
+      "UX / UI Designer": ["Product design in Figma", "UX research"],
+      "Business Analyst": ["Requirements and process modelling"]
+    }
+  },
+  "Business & Finance": {
+    "Finance": {
+      "Financial Analyst": ["FP&A and financial modelling", "Equity research"],
+      "Accountant": ["Portuguese accounting and tax (SNC, IRC, IVA)", "IFRS reporting"],
+      "Quantitative Developer": ["Algorithmic trading systems", "Risk modelling"]
+    },
+    "Marketing": {
+      "Growth Marketer": ["B2B SaaS growth", "Performance marketing (Google, Meta, LinkedIn)"],
+      "SEO Specialist": ["Technical SEO", "Content SEO"]
+    },
+    "Sales": {
+      "Sales Engineer": ["SaaS presales and demos"],
+      "Account Executive": ["B2B SaaS sales"]
+    }
+  }
+}

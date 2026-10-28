@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Made by android/persona-faces.py from lago/ui/app.js: change the face there. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="48" android:viewportHeight="48">
+    <path android:pathData="M15.6,25a8.4,8.4 0 1,0 16.8,0a8.4,8.4 0 1,0 -16.8,0z"
+        android:fillColor="#FF9BE6"
+        android:fillAlpha="0.4" />
+</vector>

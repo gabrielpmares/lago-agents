@@ -815,14 +815,18 @@ def certain_model(model):
 
 
 def run_agent(catalog_id, task, project_id="", folder="", inputs=None, unrestricted=False,
-              from_agent=None, mode="cheap", variant=None, intro=None):
+              from_agent=None, mode="cheap", variant=None, intro=None, allow_off=False, label=""):
     """Wake one catalog agent for one task, outside any work session: no Conductor, no
     pipeline. It works in the project's folder, in `folder`, or in ~/lago-work/runs, and its
     result goes back to `from_agent` (Lago). `mode` "certain" runs it on a stronger model
     with room to verify. `variant` runs a proposed manifest instead of the catalog's, and
-    `intro` replaces the opening line (evals.py's test runs). Returns (task id, agent id, model)."""
+    `intro` replaces the opening line (evals.py's test runs). `allow_off` runs it even while
+    it's switched off (its tests: a specialist sits its exam before it's switched on). `label`
+    is added to the run's name, so a run for something else says what it's for.
+    Returns (task id, agent id, model)."""
     config = config_store.load()
-    entry = enabled_agents(config).get((catalog_id or "").strip().strip("`"))
+    agents = agentdefs.catalog() if allow_off else enabled_agents(config)
+    entry = agents.get((catalog_id or "").strip().strip("`"))
     if entry is None:
         raise TeamError(f"There's no switched-on swarm agent {catalog_id!r}. find_agents lists them.")
     if not (task or "").strip():
@@ -849,7 +853,8 @@ def run_agent(catalog_id, task, project_id="", folder="", inputs=None, unrestric
     hub.add_swarm_agent(agent_id, None, project_id or "", entry["id"],
                         f"{entry['name']} · run {number}"
                         + (" · certain" if certain else "")
-                        + (f" · {project.get('name', project_id)}" if project_id else ""),
+                        + (f" · {project.get('name', project_id)}" if project_id else "")
+                        + (f" · {label}" if label else ""),
                         folder=str(cwd), unrestricted=unrestricted, model=model,
                         variant=str(variant) if variant else None)
     if whose:

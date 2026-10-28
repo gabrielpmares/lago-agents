@@ -29,6 +29,9 @@ EMPTY_CONFIG = {"teams": {}, "agents": {}, "projects": {}, "swarm": {}, "feature
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") \
     / "lago-agents"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
+# Hosted Lago (hosting/): one customer's copy in its own container, reached in a browser
+# through the host's proxy; no desktop, no keyring, no sudo.
+HOSTED = os.environ.get("LAGO_HOSTED") == "1"
 # Conversations, attachments and backups: yours alone, whatever the umask or the parent's mode.
 for _private in (STATE_DIR, DATA_DIR):
     try:
@@ -70,6 +73,9 @@ SESSIONS_DIR = Path.home() / "lago-work"
 SWARM_ID = re.compile(r"^w\d+(-|$)")
 # Agents Lago runs directly, one task each, outside any work session: `r<N>-<agent>`.
 RUN_ID = re.compile(r"^r\d+-")
+# A specialist's own conversation with you (specialists.py): `sp-<specialist>`. It keeps
+# its conversation from one question to the next.
+TUTOR_PREFIX = "sp-"
 # A permission prompt in a session Lago runs goes to him first, quietly; you're asked only if
 # he passes it on (it's critical) or hasn't answered it within this long.
 LAGO_REVIEW_SECONDS = 90
@@ -219,6 +225,7 @@ def _add_swarm(config):
                  "cwd": folders.get(row["workspace"]) or row.get("folder") or project.get("cwd") or "~",
                  "unrestricted": row["workspace"] in unrestricted or bool(row.get("unrestricted")),
                  "direct": not row["workspace"],
+                 "tutor": row["agent_id"].startswith(TUTOR_PREFIX) and not row["workspace"],
                  # whose subscription it runs on: the run's own, else its work session's
                  "account": row.get("account") or whose.get(row["workspace"], (None, None))[0],
                  "codex_home": row.get("codex_home") or whose.get(row["workspace"], (None, None))[1]}

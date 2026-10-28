@@ -6,6 +6,8 @@ no key) with a Kokoro voice as the fallback. Without that venv, speech-dispatche
 (`spd-say`) with espeak-ng speaks instead. Each announcement runs detached under a lock
 file, so announcements from different agents queue up instead of talking over each other.
 Settings live in config.json under "voice" and are edited in the Orchestrator page.
+With a "language" chosen (languages.py), the voice becomes an offline Kokoro voice for it,
+and the effect stays.
 """
 
 import math
@@ -25,6 +27,7 @@ from pathlib import Path
 
 import config_store
 import features
+import languages
 from config_store import APP_DIR, STATE_DIR
 
 LOCK_FILE = STATE_DIR / "voice.lock"
@@ -40,6 +43,7 @@ SPEAK = APP_DIR / "speak.py"
 TTS_DIR = Path.home() / ".local" / "share" / "lago-agents"
 TTS_PYTHON = TTS_DIR / "tts" / "bin" / "python"
 KOKORO_MODEL = TTS_DIR / "kokoro" / "kokoro-v1.0.onnx"
+PIPER_DIR = TTS_DIR / "piper"
 
 EDGE_VOICES = {"edge:en-GB-RyanNeural": "Ryan (British, online)",
                "edge:en-US-AndrewMultilingualNeural": "Andrew (American, online)",
@@ -73,10 +77,18 @@ KOKORO_VOICES = {"kokoro:bm_george": "George (British, offline)",
                  "kokoro:af_sky": "Sky (American, offline)",
                  "kokoro:af_jessica": "Jessica (American, offline)",
                  "kokoro:af_river": "River (American, offline)"}
+# Piper's voices (speak.py), each a model file in PIPER_DIR that voice_setup.py downloads.
+PIPER_VOICES = {"piper:pt_BR-cadu-medium": "Cadu (Portuguese, offline)"}
 ESPEAK_VOICES = {"English (America)": "eSpeak (synthetic, offline)"}
 # macOS's own voices, offline (`say`); the ones every Mac has in English.
 SAY_VOICES = {"say:Samantha": "Samantha (macOS, offline)", "say:Daniel": "Daniel (macOS, offline)",
               "say:Karen": "Karen (macOS, offline)", "say:Fred": "Fred (macOS, synthetic, offline)"}
+# macOS's women's voices, in English and the languages.py ones (`say -v '?'` doesn't say who's
+# a woman): a woman persona speaking another language with `say` takes one of these.
+SAY_WOMEN = {"Samantha", "Karen", "Moira", "Tessa", "Fiona", "Victoria", "Joana", "Luciana",
+             "Catarina", "Monica", "Paulina", "Marisol", "Amelie", "Audrey", "Aurelie", "Alice",
+             "Federica", "Emma", "Lekha", "Kiyara", "Kyoko", "O-ren", "Tingting", "Meijia", "Sinji",
+             "Lilian", "Flo", "Sandy", "Shelley", "Grandma"}
 # Speak one announcement at a time: each waits for this lock (flock(1) isn't on every system).
 QUEUE_PY = "import fcntl, subprocess, sys; f = open(sys.argv[1], 'a'); fcntl.flock(f, fcntl.LOCK_EX); sys.exit(subprocess.call(sys.argv[2:]))"
 # Effects speak.py can put on Kokoro and Edge voices (its EFFECTS has the filters): robots,
@@ -89,7 +101,7 @@ EFFECTS = {"": "None", "ai-assistant": "AI assistant", "retro-computer": "Retro 
            "whisper": "Whisper", "arcade": "Arcade 8-bit", "underwater": "Underwater",
            "gramophone": "Old gramophone", "megaphone": "Megaphone", "dream": "Dream"}
 DEFAULTS = {"enabled": True, "voice": "kokoro:bm_george", "fallback": "kokoro:bm_lewis",
-            "effect": "retro-computer", "rate": 0, "volume": 100, "greet": True, "talk": True, "chime": True, "quiet_from": "", "quiet_to": "",
+            "effect": "retro-computer", "language": languages.ENGLISH, "rate": 0, "volume": 100, "greet": True, "talk": True, "chime": True, "quiet_from": "", "quiet_to": "",
             "wake": False, "wake_phrase": "Hey Lago", "wake_personas": True, "wake_sound": "soft",
             "sent_sound": "blip",
             # The chime before each announcement, by what kind of news it is (CATEGORIES).
@@ -134,11 +146,41 @@ def voices():
         if KOKORO_MODEL.exists():
             found += [{"id": vid, "label": label, "offline": True}
                       for vid, label in KOKORO_VOICES.items()]
+        found += [{"id": vid, "label": label, "offline": True} for vid, label in PIPER_VOICES.items()
+                  if piper_ready(vid)]
     if shutil.which("spd-say"):
         found += [{"id": vid, "label": label, "offline": True} for vid, label in ESPEAK_VOICES.items()]
     if shutil.which("say") and sys.platform == "darwin":
         found += [{"id": vid, "label": label, "offline": True} for vid, label in SAY_VOICES.items()]
     return found
+
+
+def _say_listing():
+    """The voices this Mac has, as (name, locale): ("Joana", "pt_PT"), ("Eddy (Portuguese
+    (Brazil))", "pt_BR")."""
+    try:
+        out = subprocess.run(["say", "-v", "?"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [(m.group(1), m.group(2)) for m in
+            (re.match(r"(.+?)\s+([a-z]{2,3}_[A-Za-z0-9]+)\s+#", line) for line in out.splitlines()) if m]
+
+
+def say_voice(language, woman):
+    """The macOS voice ("say:Joana") that speaks `language` (a languages.py code), a woman's
+    or a man's where this Mac has one, its region's before another's; None when it has none."""
+    tag = languages.LANGUAGES[language]["tag"].replace("-", "_")
+    listing = _say_listing()
+    for group in ([n for n, loc in listing if loc == tag],
+                  [n for n, loc in listing if loc.partition("_")[0] == tag.partition("_")[0]]):
+        same = [n for n in group if (n.partition(" (")[0] in SAY_WOMEN) == woman]
+        if same or group:
+            return "say:" + (same or group)[0]
+    return None
+
+
+def piper_ready(voice_id):
+    return (PIPER_DIR / f"{voice_id.partition(':')[2]}.onnx").exists()
 
 
 # The sounds "Hey Lago" plays: while it waits for you to speak (wake_sound) and once it has
@@ -275,12 +317,20 @@ def phrase(config, kind, project_name):
     template = PHRASES.get(kind)
     if not template:
         return ""
+    code = languages.chosen(config.get("voice"))
+    if code:
+        return languages.text(code, kind, name=config.get("user_name") or languages.TEXTS[code]["hey"],
+                              project=project_name)
     return template.format(name=config.get("user_name") or "Hey", project=project_name)
 
 
 def greeting(config, now=None):
     hour = time.localtime(now).tm_hour
-    part = "morning" if 5 <= hour < 12 else "afternoon" if 12 <= hour < 18 else "evening"
+    index = 0 if 5 <= hour < 12 else 1 if 12 <= hour < 18 else 2
+    code = languages.chosen(config.get("voice"))
+    if code:
+        return languages.greeting(code, index, config.get("user_name") or "")
+    part = ("morning", "afternoon", "evening")[index]
     name = config.get("user_name") or "there"
     return f"Good {part}, {name}. What will we work on today?"
 
@@ -386,29 +436,48 @@ def speaking():
     return any(_alive(g) for g in groups)
 
 
-def _espeak(text, rate, volume=100, name="English (America)"):
+def _espeak(text, rate, volume=100, name="English (America)", language=""):
+    """spd-say's command; with a `language` (a languages.py code) it picks eSpeak's voice for it."""
     loud = max(-100, min(100, volume - 100))  # spd-say's 0 is its normal volume, 100 its loudest
+    who = ["-l", language.partition("-")[0]] if language else ["-y", name]
     return shlex.join(["spd-say", "--wait", "-o", "espeak-ng", "-r", str(rate), "-i", str(loud),
-                       "-y", name, "--", text])
+                       *who, "--", text])
 
 
 def say(text, voice=None, category="progress"):
     """Queue `text` to be spoken, after the chime for its `category` (CATEGORIES). Returns
-    False when there's no speech engine, or the Voice extra is off."""
-    if not features.on(config_store.load(), "voice"):
+    False when there's no speech engine, or the Voice extra is off. `voice` may name the
+    "persona" speaking (a preview); otherwise it's the current one."""
+    import personas
+    config = config_store.load()
+    if not features.on(config, "voice"):
         return False
     voice = {**DEFAULTS, **(voice or {})}
     available = [v["id"] for v in voices()]
     if not available:
         return False
-    chosen = voice["voice"] if voice["voice"] in available else available[0]
+    # Without his own voice here (a Mac without Kokoro), one of the same sex: Marina doesn't
+    # get Daniel, nor Chip Samantha.
+    woman = languages.woman(voice["voice"])
+    chosen = voice["voice"] if voice["voice"] in available else \
+        next((v for v in available if languages.woman(v) == woman), available[0])
+    language = languages.chosen(voice)
+    fallback = voice.get("fallback") if voice.get("fallback") in available else ""
+    if language and KOKORO_MODEL.exists() and TTS_PYTHON.exists():
+        # Another language: the persona's own voice for it, or Kokoro's, whoever he speaks
+        # with in English; Kokoro's is the fallback.
+        abroad = personas.voice_abroad(voice.get("persona") or personas.current(config), language)
+        kokoro = languages.voice_for(chosen, language)
+        chosen, fallback = (abroad, kokoro) if abroad in available else (kokoro, "")
+    elif language and chosen.startswith("say:"):
+        chosen = say_voice(language, woman) or chosen  # macOS's own voice for the language
     rate = max(-100, min(100, int(voice.get("rate") or 0)))
     volume = max(VOLUME_MIN, min(VOLUME_MAX, int(voice.get("volume") or 100)))
     out = None
     if to_phone():
         PHONE_QUEUE.mkdir(mode=0o700, exist_ok=True)
         out = PHONE_QUEUE / f"{time.time_ns()}-{os.getpid()}"  # speak.py adds the extension
-    if chosen in SAY_VOICES:
+    if chosen.startswith("say:"):
         name = chosen.partition(":")[2]
         words = str(175 + rate)
         if out:
@@ -417,15 +486,14 @@ def say(text, voice=None, category="progress"):
             marker = shlex.quote(str(PLAYING_FILE))
             command = f"echo $$ > {marker}; " + shlex.join(["say", "-v", name, "-r", words, "--", text]) + f"; rm -f {marker}"
     elif chosen in ESPEAK_VOICES:
-        command = _espeak(text, rate, volume, chosen)
+        command = _espeak(text, rate, volume, chosen, language)
         if not out:  # spd-say starts at once: mark it playing for its whole run
             marker = shlex.quote(str(PLAYING_FILE))
             command = f"echo $$ > {marker}; {command}; rm -f {marker}"
         if out:  # espeak-ng writes a file; spd-say can't
-            command = shlex.join(["espeak-ng", "-v", "en-us", "-s", str(175 + rate), "-w", f"{out}.part", "--", text]) \
+            command = shlex.join(["espeak-ng", "-v", language.partition("-")[0] or "en-us", "-s", str(175 + rate), "-w", f"{out}.part", "--", text]) \
                 + f" && mv {shlex.quote(str(out))}.part {shlex.quote(str(out))}.wav"
     else:
-        fallback = voice.get("fallback") if voice.get("fallback") in available else ""
         speak = [str(TTS_PYTHON), str(SPEAK), "--voice", chosen, "--rate", str(rate),
                  "--volume", str(volume)]
         if fallback and fallback not in ESPEAK_VOICES and fallback != chosen:
@@ -441,9 +509,10 @@ def say(text, voice=None, category="progress"):
             speak += ["--playing", str(PLAYING_FILE)]
         command = shlex.join(speak + ["--", text])
         if shutil.which("spd-say") and not out:
-            command += " || " + _espeak(text, rate, volume)  # last resort: say it somehow
+            command += " || " + _espeak(text, rate, volume, language=language)  # last resort: say it somehow
         elif sys.platform == "darwin" and shutil.which("say") and not out:
-            command += " || " + shlex.join(["say", "--", text])
+            last = (say_voice(language, woman) if language else None) or ("say:Samantha" if woman else "say:Daniel")
+            command += " || " + shlex.join(["say", "-v", last.partition(":")[2], "--", text])
     try:
         proc = subprocess.Popen([sys.executable, "-c", QUEUE_PY, str(LOCK_FILE), "sh", "-c", command],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,

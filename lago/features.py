@@ -14,8 +14,8 @@ import config_store
 FEATURES = {
     "voice": ("Voice", "Lago says his replies and task reports aloud, greets you, and can "
                        "listen for \"Hey Lago\"."),
-    "personas": ("Personas", "Talk to Chip or Atlas instead of Lago: the same assistant with "
-                             "another name, face and voice."),
+    "personas": ("Personas", "Talk to Chip, Atlas, Marina, Ada or Iris instead of Lago: the same assistant "
+                             "with another name, face and voice."),
     "routines": ("Routines", "Recurring jobs, on a schedule or a webhook."),
     "budgets": ("Accounts & Budgets", "Several Claude accounts, and spending limits that stop "
                                       "work when reached."),

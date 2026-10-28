@@ -1,0 +1,6 @@
+*
+!lago
+!lago-agents
+!hosting/entrypoint.sh
+**/__pycache__
+**/*.pyc

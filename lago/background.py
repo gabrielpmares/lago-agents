@@ -23,6 +23,7 @@ import ghcatalog
 import notify
 import routines
 import schedules
+import specialists
 import statuscards
 import team
 import watchdog
@@ -121,6 +122,7 @@ def start_loops():
                 schedules.start_firing(notify.tell_orchestrator)
                 routines.start_firing()
                 evals.start_worker()
+                specialists.start_worker()
                 threading.Thread(target=_resume_after_reset, name="usage-resume", daemon=True).start()
                 threading.Thread(target=_housekeeping, name="housekeeping", daemon=True).start()
                 threading.Thread(target=_watchdogs, name="watchdogs", daemon=True).start()

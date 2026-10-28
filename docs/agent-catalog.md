@@ -41,6 +41,8 @@ tools: Read, Grep                # optional: overrides the extended definition's
 model: opus                      # optional: overrides the extended definition's model
 source: owner/repo               # optional: the GitHub project it's built on (its stars
                                  # give it a head start in the ranking)
+knowledge: <id>/knowledge        # optional: a specialist's notes, a folder under
+                                 # catalog/specialists/ it may read (docs/specialists.md)
 ---
 
 Optional instructions. With `extends`, they are added after the extended definition's

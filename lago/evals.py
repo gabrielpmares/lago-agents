@@ -304,7 +304,8 @@ def _start(run):
     hub.update_test_run(run["id"], status="running")
     try:
         task_id, _, _ = swarm.run_agent(run["catalog_id"], test["task"], folder=run["folder"],
-                                        inputs=inputs, variant=run["variant"], intro=TEST_INTRO)
+                                        inputs=inputs, variant=run["variant"], intro=TEST_INTRO,
+                                        allow_off=True)
     except TeamError as error:
         hub.update_test_run(run["id"], status="error", score=0, notes=str(error))
         return

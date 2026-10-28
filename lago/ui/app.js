@@ -508,7 +508,7 @@ function navigate() {
   currentView = view;
   const token = ++viewToken;
   const navName = { agent: "overview", pipeline: "projects", pipelines: "projects", project: "projects", work: "tasks",
-    teams: "swarm", sessions: "swarm", find: "swarm", import: "swarm", replay: "map" }[view] || view;
+    teams: "swarm", sessions: "swarm", find: "swarm", import: "swarm", specialists: "swarm", specialist: "swarm", replay: "map" }[view] || view;
   document.querySelectorAll(".nav a").forEach((a) => {
     if (a.dataset.view === navName) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
@@ -646,8 +646,10 @@ function renderNotifications() {
         h("span", { class: "note-when" }, ago(n.at), n.for && n.for !== state.me?.login ? ` · for ${n.for}` : ""))),
     h("button", { type: "button", class: "note-dismiss", title: "Dismiss", "aria-label": `Dismiss: ${n.title}`,
       onclick: () => bridge.call("dismiss_notification", { key: n.key }).then(pollLive).catch((e) => toast(e.message, "error")) }, icon("x")));
+  const clearAll = () => bridge.call("dismiss_notifications", { keys: notes.map((n) => n.key) }).then(pollLive).catch((e) => toast(e.message, "error"));
   fill(byId("notifications"),
-    h("div", { class: "notes-head" }, h("h2", {}, "Needs You"), urgent.length ? h("span", { class: "faint" }, urgent.length) : null),
+    h("div", { class: "notes-head" }, h("h2", {}, "Needs You"), urgent.length ? h("span", { class: "faint" }, urgent.length) : null,
+      notes.length ? h("button", { type: "button", class: "btn small ghost notes-clear", title: "Dismiss everything here (anything new shows again)", onclick: clearAll }, icon("broom"), "Clear All") : null),
     urgent.length ? h("ul", { class: "notes", role: "list" }, urgent.map(item))
       : h("p", { class: "notes-empty" }, icon("check-circle"), "Nothing needs you right now."),
     finished.length ? [h("div", { class: "notes-head" }, h("h2", {}, "Finished")), h("ul", { class: "notes", role: "list" }, finished.map(item))] : null);
@@ -1882,7 +1884,7 @@ async function skillFetchDialog() {
 /* Agents, Teams and other Claude sessions: one place, three tabs. */
 function agentsTabs(active) {
   return h("nav", { class: "segmented page-tabs", "aria-label": "Agents" },
-    [["swarm", "Agents", "users-three"], ["find", "Find on GitHub", "compass"], ["import", "Import", "download-simple"], ["teams", "Fixed Teams", "tree-structure"], ["sessions", "Other Claude Sessions", "terminal-window"]]
+    [["swarm", "Agents", "users-three"], ["specialists", "Specialists", "graduation-cap"], ["find", "Find on GitHub", "compass"], ["import", "Import", "download-simple"], ["teams", "Fixed Teams", "tree-structure"], ["sessions", "Other Claude Sessions", "terminal-window"]]
       .map(([view, label, ic]) => h("a", { href: `#${view}`, role: "tab", "aria-selected": String(view === active), class: view === active ? "on" : "" }, icon(ic), label)));
 }
 
@@ -3417,6 +3419,421 @@ views.find = (root, alive) => {
   load();
 };
 
+/* ================================================================ specialists */
+
+/* Specialists work and teach like a professional in one role (specialists.py): you narrow a
+   field down to a job, approve the role map, and it studies, takes an exam and goes live. */
+const SPECIALIST_STATUS = {
+  mapping: ["working", "Mapping the role"], map_ready: ["needs_you", "Role map to check"],
+  studying: ["working", "Studying"], assembling: ["working", "Writing its exam"],
+  examining: ["working", "Taking its exam"], live: ["solved", "Ready"], failed: ["exited", "Stopped"],
+};
+const SPECIALIST_DEPTH = { core: "Core", working: "Working", awareness: "Awareness" };
+const specialistPill = (status) => {
+  const [tone, label] = SPECIALIST_STATUS[status] || ["stopped", status];
+  return h("span", { class: `pill ${tone}` }, label);
+};
+
+/* A knowledge note: code fences as code, the rest through markdown(), each heading and quote
+   line a paragraph of its own. */
+function noteBody(text) {
+  const prose = (part) => markdown(part.split("\n").map((line) => (/^\s*(#{1,6}\s|>)/.test(line) ? `\n${line.replace(/^\s*>\s?/, "")}\n` : line)).join("\n"));
+  return text.split(/^```[^\n]*\n?/m).map((part, i) => (i % 2 ? h("pre", { class: "draft-file note-code" }, part.replace(/\n$/, "")) : prose(part)));
+}
+
+views.specialists = (root, alive) => {
+  const body = h("div", {}, skeleton());
+  const connections = h("div", { class: "spec-connections" });
+  let data = null;
+  let timer = null;
+  root.append(pageHead("Agents", "Specialists work and teach like a professional in one role. Each one is built from researched notes and has to pass an exam before you can use it.", () => load()),
+    agentsTabs("specialists"),
+    h("div", { class: "controls-line", style: "margin:4px 0 14px" },
+      h("button", { class: "btn primary", onclick: async () => {
+        const id = await newSpecialistDialog(data);
+        if (id) location.hash = `#specialist/${id}`;
+      } }, icon("plus"), "New Specialist")),
+    connections, body);
+
+  function renderConnections() {
+    const nb = data.notebooklm;
+    fill(connections,
+      h("div", { class: "spec-conn" }, icon("magnifying-glass"), h("span", {}, h("b", {}, "Research"), " ",
+        h("span", { class: "faint" }, data.perplexity ? "Claude's web search and Perplexity" : "Claude's web search")),
+        data.perplexity ? null : h("button", { class: "btn small ghost", title: "Perplexity's deep research for the wide overviews; its API is paid per use",
+          onclick: () => perplexityKeyDialog().then((saved) => { if (saved) load(); }) }, "Add Perplexity")),
+      h("div", { class: "spec-conn" }, icon("notebook"), h("span", {}, h("b", {}, "NotebookLM"), " ",
+        h("span", { class: "faint" }, nb.connected ? "connected: each specialist's notes become a notebook" : nb.installed ? "signed out" : "not connected")),
+        nb.connected ? null : h("button", { class: "btn small ghost", title: "Uses the unofficial notebooklm-py with your Google sign-in. It can stop working when Google changes NotebookLM.",
+          onclick: async (e) => { if (await runAction(e.currentTarget, () => bridge.call("connect_notebooklm"))) waitForSignIn(); } }, "Connect"),
+        nb.connected ? null : h("button", { class: "btn small ghost", onclick: (e) => runAction(e.currentTarget, async () => {
+          const s = await bridge.call("check_notebooklm");
+          data.notebooklm = s;
+          renderConnections();
+          return s.connected ? { ok: true, message: "NotebookLM is connected." } : { ok: false, message: s.error || "Not signed in yet." };
+        }) }, "Check")));
+  }
+
+  // After Connect: look again every few seconds (for up to 10 minutes) until the sign-in lands.
+  let signInTimer = null;
+  function waitForSignIn(until = Date.now() + 600000) {
+    clearTimeout(signInTimer);
+    signInTimer = setTimeout(async () => {
+      if (!alive()) return;
+      await load();
+      if (data?.notebooklm.connected) toast("NotebookLM is connected.");
+      else if (Date.now() < until) waitForSignIn(until);
+    }, 5000);
+  }
+
+  async function load() {
+    clearTimeout(timer);
+    try { data = await bridge.call("specialists"); } catch (error) { if (alive()) body.replaceChildren(errorBox(error, load)); return; }
+    if (!alive()) return;
+    renderConnections();
+    body.replaceChildren(data.specialists.length ? h("div", { class: "spec-grid" }, data.specialists.map((s) =>
+      h("a", { class: "spec-card", href: `#specialist/${s.id}` },
+        h("div", { class: "draft-row-top" }, icon("graduation-cap"), h("strong", {}, s.title), h("span", { style: "flex:1" }), specialistPill(s.status)),
+        h("p", { class: "faint spec-path" }, s.path.join(" › ")),
+        h("p", { class: "muted draft-line" }, s.message),
+        h("p", { class: "faint", style: "font-size:12px;margin:6px 0 0" }, [
+          s.topic_count ? `${s.studied} of ${s.topic_count} topics studied` : null,
+          s.score !== null ? `exam ${s.score}%` : null,
+          s.refresh?.status === "ready" ? "refresh waiting for you" : null].filter(Boolean).join(" · ")))))
+      : h("div", { class: "empty" }, h("strong", {}, "No specialists yet."),
+        "Pick a role, say a .NET cloud engineer on Azure, and Lago maps what the job really involves, studies it, and examines the result before you use it."));
+    if (data.specialists.some((s) => !["live", "failed", "map_ready"].includes(s.status) || s.refresh?.status)) timer = setTimeout(() => { if (alive()) load(); }, 8000);
+  }
+  viewCleanup = () => { clearTimeout(timer); clearTimeout(signInTimer); };
+  load();
+};
+
+async function perplexityKeyDialog() {
+  const value = await promptDialog({ title: "Perplexity API Key", label: "API key",
+    help: "From perplexity.ai/account/api. It's kept in your keyring as the secret perplexity (PERPLEXITY_API_KEY), for every agent. Specialists' researchers use it for wide overviews, and you pay Perplexity per use.",
+    confirm: "Save Key" });
+  if (!value) return false;
+  return runAction(null, () => bridge.call("save_secret", { name: "perplexity", env: "PERPLEXITY_API_KEY", value, project: "" }), "Saved. New research runs use Perplexity.");
+}
+
+/* Narrow a field down to a role, one level at a time; Lago suggests more at any level. */
+function newSpecialistDialog(data) {
+  const tree = data?.fields || {};
+  const path = [];
+  const added = {};  // options you typed or Lago suggested, per level
+  let depth = "focused";
+  return openDialog((close) => {
+    const crumbs = h("div", { class: "spec-crumbs" });
+    const options = h("div", { class: "spec-options" });
+    const custom = h("input", { class: "input", placeholder: "Something else: type a field, role or focus", autocomplete: "off" });
+    const notes = h("textarea", { id: "spec-notes", class: "input", rows: 3, placeholder: "Optional: what matters most to you, e.g. \"I'm targeting a job at a bank: Azure DevOps, Bicep, AKS, Service Bus and private networking\"" });
+    const go = h("button", { type: "submit", class: "btn primary", disabled: true }, icon("graduation-cap"), "Map This Role");
+    const suggestBtn = h("button", { type: "button", class: "btn small ghost", onclick: async (e) => {
+      if (!path.length) return;
+      await runAction(e.currentTarget, async () => {
+        const res = await bridge.call("specialist_suggest", { path });
+        const key = path.join(" > ");
+        added[key] = [...new Set([...(added[key] || []), ...res.options])];
+        render();
+        return { ok: true, message: res.options.length ? `${res.options.length} more to pick from.` : "Nothing more to suggest here." };
+      });
+    } }, icon("sparkle"), "Suggest More");
+    const level = () => {
+      let node = tree;
+      for (const part of path) node = node && !Array.isArray(node) && typeof node === "object" ? node[part] : null;
+      const listed = !node ? [] : Array.isArray(node) ? node : Object.keys(node);
+      return [...new Set([...listed, ...(added[path.join(" > ")] || [])])];
+    };
+    const names = ["Field", "Area", "Role", "Focus", "Narrower"];
+    function render() {
+      fill(crumbs, h("button", { type: "button", class: "linklike", onclick: () => { path.length = 0; render(); } }, "All fields"),
+        path.map((p, i) => [h("span", { class: "faint" }, " › "),
+          h("button", { type: "button", class: "linklike", onclick: () => { path.length = i + 1; render(); } }, p)]));
+      const here = level();
+      fill(options, here.length ? h("p", { class: "label faint" }, `Pick the ${names[Math.min(path.length, names.length - 1)].toLowerCase()}`) : null,
+        here.map((o) => h("button", { type: "button", class: "spec-option", onclick: () => { path.push(o); render(); } }, o)),
+        !here.length && path.length ? h("p", { class: "muted" }, "That's as narrow as the list goes. Build it here, or add a narrower focus below.") : null);
+      suggestBtn.hidden = !path.length;
+      go.disabled = path.length < 2;
+      go.title = path.length < 2 ? "Narrow it down to at least a role" : "";
+    }
+    render();
+    return h("form", { class: "spec-dialog", onsubmit: async (e) => {
+        e.preventDefault();
+        let res = null;
+        const ok = await runAction(go, async () => (res = await bridge.call("create_specialist", { path, notes: notes.value.trim(), depth })));
+        if (ok && res?.id) close(res.id);
+      } },
+      h("h2", {}, "New Specialist"),
+      h("p", { class: "desc" }, "Narrow it down as far as you like. Lago first maps what people in the role really do and must know, from job postings, certification outlines and practitioners. You check that map before anything is studied."),
+      crumbs, options,
+      h("div", { class: "controls-line" }, custom,
+        h("button", { type: "button", class: "btn small", onclick: () => { const v = custom.value.trim(); if (v) { path.push(v); custom.value = ""; render(); } } }, icon("plus"), "Add"),
+        suggestBtn),
+      h("div", { class: "field" }, h("label", { for: "spec-notes" }, "What it should focus on"), notes),
+      h("div", { class: "field" }, h("label", {}, "How deep"),
+        h("div", { class: "segmented", role: "radiogroup" }, [["focused", "Focused", "8-12 topics: a few hours"], ["thorough", "Thorough", "14-22 topics: most of a day, more usage"]]
+          .map(([key, label, hint]) => h("button", { type: "button", role: "radio", "aria-checked": String(key === depth), title: hint,
+            onclick: (e) => { depth = key; e.currentTarget.parentElement.querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", String(b === e.currentTarget))); } }, label))),
+        h("p", { class: "help" }, "Focused: 8-12 topics, a few hours. Thorough: 14-22 topics, most of a day and more usage.")),
+      h("div", { class: "dialog-actions" },
+        h("button", { type: "button", class: "btn ghost", onclick: () => close(undefined) }, "Cancel"), go));
+  }, { wide: true });
+}
+
+views.specialist = (root, alive, sid, tab = "ask") => {
+  const head = h("div");
+  const body = h("div", {}, skeleton());
+  let data = null;
+  let timer = null;
+  // The Ask box survives the page refreshing while an answer is on its way.
+  const draft = { text: "", files: [], case: false };
+  root.append(h("p", { style: "margin:0 0 8px" }, h("a", { href: "#specialists", class: "faint" }, icon("arrow-left"), " Specialists")), head, body);
+
+  async function load() {
+    clearTimeout(timer);
+    try { data = await bridge.call("specialist", { specialist_id: sid }); } catch (error) { if (alive()) body.replaceChildren(errorBox(error, load)); return; }
+    if (!alive()) return;
+    fill(head, pageHead(data.title, data.path.join(" › ")),
+      h("div", { class: "spec-status" }, specialistPill(data.status), h("span", { class: "muted" }, data.message),
+        h("span", { style: "flex:1" }),
+        data.status === "failed" ? h("button", { class: "btn small", onclick: (e) => runAction(e.currentTarget, () => bridge.call("retry_specialist", { specialist_id: sid })).then(load) }, icon("arrow-clockwise"), "Try Again") : null,
+        !["mapping", "studying", "assembling", "examining"].includes(data.status) ? h("button", { class: "btn small ghost danger-text", onclick: async (e) => {
+          if (await confirmDialog({ title: `Remove ${data.title}?`, body: "Its notes, exam and conversation are deleted. This can't be undone.", confirm: "Remove", danger: true })
+              && await runAction(e.currentTarget, () => bridge.call("remove_specialist", { specialist_id: sid }))) location.hash = "#specialists";
+        } }, "Remove") : null));
+    if (data.status === "map_ready") body.replaceChildren(roleMapReview());
+    else if (data.status === "live") body.replaceChildren(liveTabs());
+    else body.replaceChildren(progress());
+    const busy = !["live", "failed", "map_ready"].includes(data.status) || data.refresh?.status && data.refresh.status !== "ready"
+      || data.conversation.some((q) => !["done", "failed"].includes(q.status));
+    if (busy) timer = setTimeout(() => { if (alive() && !byId("dialog").open && !document.activeElement?.matches?.("textarea")) load(); else if (alive()) timer = setTimeout(load, 4000); }, 6000);
+  }
+
+  function roleMapReview() {
+    const map = data.role_map || {};
+    const keep = new Set((map.topics || []).map((t) => t.id));
+    const extra = [];
+    const extraList = h("div", { class: "chips" });
+    const notes = h("textarea", { class: "input", rows: 2, placeholder: "Optional: anything to stress while studying" });
+    const name = h("input", { class: "input", placeholder: "Add a topic, e.g. Azure API Management policies" });
+    const extraDepth = h("select", { class: "select" }, Object.entries(SPECIALIST_DEPTH).map(([v, l]) => h("option", { value: v, selected: v === "working" }, l)));
+    const count = h("span", { class: "faint" });
+    const recount = () => { count.textContent = `${keep.size + extra.length} topics`; };
+    const renderExtra = () => { fill(extraList, extra.map((t, i) => h("span", { class: "chip" }, `${t.name} · ${SPECIALIST_DEPTH[t.depth]}`,
+      h("button", { type: "button", class: "linklike", "aria-label": `Remove ${t.name}`, onclick: () => { extra.splice(i, 1); renderExtra(); recount(); } }, "✕")))); };
+    recount();
+    const areas = [...new Set((map.topics || []).map((t) => t.area || "Other"))];
+    const list = (title, items) => items?.length ? h("div", {}, h("h3", { class: "label" }, title), h("ul", { class: "spec-list" }, items.map((x) => h("li", {}, x)))) : null;
+    return h("div", { class: "spec-map" },
+      h("div", { class: "callout spec-callout" }, h("strong", {}, "Check the role map before it studies. "),
+        "Untick what you don't need and add what's missing. Each topic gets its own research run, so fewer topics finish sooner and use less."),
+      map.summary ? h("p", {}, map.summary) : null,
+      h("div", { class: "spec-cols" }, list("Day to day", map.day_to_day), list("What they deliver", map.deliverables), list("What makes a senior", map.senior_bar)),
+      map.certifications?.length ? h("p", { class: "faint" }, "Certifications that match: ",
+        map.certifications.map((c, i) => [i ? ", " : "", c.url ? h("a", { class: "ref", href: c.url, onclick: (e) => { e.preventDefault(); openUrl(c.url); } }, c.name) : c.name])) : null,
+      h("h2", { class: "label", style: "margin-top:18px" }, "Topics to study ", count),
+      areas.map((area) => h("section", { class: "spec-area" }, h("h3", {}, area),
+        (map.topics || []).filter((t) => (t.area || "Other") === area).map((t) => h("label", { class: "spec-topic" },
+          h("input", { type: "checkbox", checked: true, onchange: (e) => { e.target.checked ? keep.add(t.id) : keep.delete(t.id); recount(); } }),
+          h("span", {}, h("b", {}, t.name), " ", h("span", { class: `chip depth-${t.depth}` }, SPECIALIST_DEPTH[t.depth] || t.depth),
+            h("small", { class: "faint" }, t.why || ""),
+            t.subtopics?.length ? h("small", { class: "faint" }, t.subtopics.join(" · ")) : null))))),
+      h("div", { class: "controls-line", style: "margin-top:12px" }, name, extraDepth,
+        h("button", { type: "button", class: "btn small", onclick: () => { const v = name.value.trim(); if (v) { extra.push({ name: v, depth: extraDepth.value }); name.value = ""; renderExtra(); recount(); } } }, icon("plus"), "Add Topic")),
+      extraList,
+      h("div", { class: "field", style: "margin-top:12px" }, h("label", {}, "Notes for the study"), notes),
+      h("div", { class: "controls-line" },
+        h("button", { class: "btn primary", onclick: (e) => runAction(e.currentTarget, () => bridge.call("approve_specialist_map",
+          { specialist_id: sid, keep: [...keep], added: extra, notes: notes.value.trim() })).then(load) }, icon("check"), "Approve and Study")),
+      map.sources?.length ? h("details", { class: "draft-more" }, h("summary", {}, `Where the map comes from (${map.sources.length} sources)`),
+        h("ul", { class: "spec-list" }, map.sources.map((s) => h("li", {}, h("a", { class: "ref", href: s.url, onclick: (e) => { e.preventDefault(); openUrl(s.url); } }, s.title || s.url))))) : null);
+  }
+
+  function progress() {
+    const topics = Object.entries(data.topics);
+    const names = Object.fromEntries((data.role_map?.topics || []).map((t) => [t.id, t.name]));
+    const mark = { done: ["check-circle", "Studied"], studying: ["circle-notch", "Studying"], queued: ["circle", "Waiting"], failed: ["warning-circle", "Couldn't study"] };
+    return h("div", {},
+      topics.length ? h("div", { class: "spec-topics" }, topics.map(([id, t]) => h("div", { class: `spec-topic-row t-${t.status}` },
+        icon(mark[t.status]?.[0] || "circle"), h("span", {}, names[id] || id), h("span", { class: "faint" }, mark[t.status]?.[1] || t.status)))) : null,
+      data.exam.length ? examList() : null,
+      data.status === "mapping" ? h("p", { class: "muted" }, "Reading job postings, certification outlines and practitioner sources. This takes a few minutes; you'll hear when the map is ready.") : null);
+  }
+
+  const EXAM_STATE = { queued: ["Waiting its turn", "stopped"], running: ["Answering", "working"], grading: ["Being graded", "working"], error: ["Couldn't run", "exited"] };
+
+  function examList() {
+    return h("div", { class: "rows spec-exam" }, data.exam.map((t) => h("div", { class: "draft-row" },
+      h("div", { class: "draft-row-top" }, h("strong", {}, t.name), h("span", { style: "flex:1" }),
+        t.score !== undefined ? h("span", { class: `pill ${t.score >= 0.7 ? "solved" : "exited"}` }, `${Math.round(t.score * 100)}%`)
+          : h("span", { class: `pill ${EXAM_STATE[t.state]?.[1] || "stopped"}` }, EXAM_STATE[t.state]?.[0] || "Not graded")),
+      t.notes ? h("p", { class: "faint draft-line", style: "font-size:12.5px" }, t.notes) : null)));
+  }
+
+  function liveTabs() {
+    const tabs = [["ask", "Ask", "chat-circle-dots"], ["work", "Give It Work", "hammer"], ["notes", "Notes", "books"], ["exam", "Exam", "exam"],
+      ["updates", "Updates", "arrows-clockwise"], ["notebook", "NotebookLM", "notebook"]];
+    const pane = { ask: askPane, work: workPane, notes: notesPane, exam: () => h("div", {}, h("p", { class: "muted" },
+      `It passed with ${data.score}%. The exam is also its test suite: rewrites of its prompt and refreshes of its notes must pass it too.`), examList()),
+      updates: updatesPane, notebook: notebookPane }[tab] || askPane;
+    return h("div", {}, h("nav", { class: "segmented page-tabs", "aria-label": "Specialist" },
+      tabs.map(([key, label, ic]) => h("a", { href: `#specialist/${sid}/${key}`, role: "tab", "aria-selected": String(key === tab), class: key === tab ? "on" : "" }, icon(ic), label))),
+      pane());
+  }
+
+  function askPane() {
+    const question = h("textarea", { class: "input", rows: 3, oninput: () => { draft.text = question.value; },
+      placeholder: `Ask anything about the field, e.g. "Explain when to use Service Bus topics instead of Event Hubs" or "Quiz me on AKS networking". Attach a case or a document for it to read.` });
+    question.value = draft.text;
+    const strip = h("div", { class: "attach-strip spec-attach" });
+    const picker = h("input", { type: "file", multiple: true, hidden: true,
+      accept: "application/pdf,text/*,.md,.markdown,.csv,.json,.yaml,.yml,.log,image/png,image/jpeg,image/gif,image/webp",
+      onchange: () => { attach([...picker.files]); picker.value = ""; } });
+    const caseSwitch = h("label", { class: "switch-row small", title: "It solves the case and writes a walkthrough you keep: every step with why, the alternatives, and how to explain it, then drills you on it" },
+      h("button", { class: "switch", role: "switch", type: "button", "aria-checked": String(draft.case),
+        onclick: (e) => { draft.case = !draft.case; e.currentTarget.setAttribute("aria-checked", String(draft.case)); } }), "Case study: teach me to explain every step");
+    const send = h("button", { class: "btn primary", onclick: async (e) => {
+      const text = question.value.trim();
+      if (!text && !(draft.case && draft.files.length)) return;
+      if (await runAction(e.currentTarget, () => bridge.call("ask_specialist", { specialist_id: sid, question: text, files: draft.files.map(({ data, name }) => ({ data, name })), case: draft.case }),
+          draft.case ? "Asked. It reads the case and writes your walkthrough; its answer appears here." : "Asked. Its answer appears here.")) {
+        Object.assign(draft, { text: "", files: [], case: false });
+        load();
+      }
+    } }, icon("paper-plane-right"), "Ask");
+    question.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send.click(); });
+    function attach(files) {
+      for (const file of files) {
+        const limit = (file.type === "application/pdf" ? 20 : file.type.startsWith("image/") ? 10 : 5) * 1024 * 1024;
+        if (file.size > limit) { toast(`${file.name} is over ${limit / 1024 / 1024} MB`, "error"); continue; }
+        const reader = new FileReader();
+        reader.onload = () => { draft.files.push({ data: reader.result, name: file.name }); renderStrip(); };
+        reader.readAsDataURL(file);
+      }
+    }
+    function renderStrip() {
+      strip.hidden = !draft.files.length;
+      fill(strip, draft.files.map((f) => h("div", { class: "attach-thumb file", title: f.name },
+        icon(/\.pdf$/i.test(f.name) ? "file-pdf" : "file-text"), h("span", { class: "attach-name" }, f.name),
+        h("button", { type: "button", class: "attach-remove", title: "Remove", "aria-label": `Remove ${f.name}`,
+          onclick: () => { draft.files = draft.files.filter((x) => x !== f); renderStrip(); } }, icon("x")))));
+    }
+    renderStrip();
+    const box = h("div", { class: "spec-ask",
+        ondragover: (e) => { if (e.dataTransfer?.types.includes("Files")) { e.preventDefault(); box.classList.add("dropping"); } },
+        ondragleave: (e) => { if (!box.contains(e.relatedTarget)) box.classList.remove("dropping"); },
+        ondrop: (e) => { box.classList.remove("dropping"); const files = [...(e.dataTransfer?.files || [])]; if (files.length) { e.preventDefault(); attach(files); } } },
+      strip, question, picker,
+      h("div", { class: "controls-line" },
+        h("button", { class: "btn ghost small", type: "button", title: "Markdown, PDFs, text files or pictures (or drop them here)", onclick: () => picker.click() }, icon("paperclip"), "Attach"),
+        caseSwitch, h("span", { style: "flex:1" }), h("span", { class: "faint", style: "font-size:12px" }, "Ctrl+Enter to send"), send));
+    return h("div", { class: "spec-chat" },
+      data.work_files?.length ? caseFiles() : null,
+      data.conversation.length ? data.conversation.map((q) => h("article", { class: "spec-qa" },
+        h("div", { class: "spec-q" }, q.case ? h("span", { class: "pill solved", style: "margin-right:6px" }, "Case study") : null,
+          icon("user"), " ", h("span", { class: "prewrap" }, q.question),
+          q.files?.length ? h("div", { class: "spec-q-files" }, q.files.map((f) => workFileButton(f))) : null),
+        q.answer ? h("div", { class: "spec-a" }, noteBody(q.answer))
+          : h("p", { class: "faint" }, ["done", "failed"].includes(q.status) ? "No answer." : "Thinking…")))
+        : h("p", { class: "muted" }, "It keeps the conversation going from one question to the next, so you can ask follow-ups. It answers from its studied notes and says where each fact comes from. Give it a case study and it solves it with you, step by step, until you can explain it yourself."),
+      box);
+  }
+
+  function caseFiles() {
+    const cases = data.work_files.filter((f) => f.kind === "case");
+    const given = data.work_files.filter((f) => f.kind === "file");
+    return h("details", { class: "draft-more", open: cases.length ? true : null },
+      h("summary", {}, icon("folder-open"), ` Case files (${cases.length} walkthrough${cases.length === 1 ? "" : "s"}, ${given.length} you gave it)`),
+      cases.length ? h("div", { class: "spec-q-files" }, cases.map((f) => workFileButton(f, "notebook"))) : null,
+      given.length ? h("div", { class: "spec-q-files" }, given.map((f) => workFileButton(f))) : null);
+  }
+
+  // A text file opens here; a PDF or picture in its usual app.
+  function workFileButton(f, ic) {
+    const text = f.text ?? /\.(md|markdown|txt|csv|json|ya?ml|log)$/i.test(f.name);
+    return h("button", { type: "button", class: "btn ghost small", title: f.path, onclick: async () => {
+      if (!text) { openFileRef(f.path); return; }
+      let res;
+      try { res = await bridge.call("specialist_file", { specialist_id: sid, path: f.path }); } catch (error) { toast(error.message, "error"); return; }
+      openDialog((close) => h("form", { class: "spec-note", onsubmit: (e) => { e.preventDefault(); close(); } },
+        h("h2", {}, f.name), h("div", { class: "spec-note-body" }, /\.(md|markdown)$/i.test(f.name) ? noteBody(res.text) : h("pre", { class: "note-code" }, res.text)),
+        h("div", { class: "dialog-actions" },
+          h("button", { type: "button", class: "btn ghost", onclick: () => openFileRef(f.path) }, icon("arrow-square-out"), "Open in Its App"),
+          h("button", { type: "submit", class: "btn primary" }, "Close"))), { wide: true });
+    } }, icon(ic || (/\.pdf$/i.test(f.name) ? "file-pdf" : /\.(png|jpe?g|gif|webp)$/i.test(f.name) ? "image" : "file-text")), f.name);
+  }
+
+  function workPane() {
+    const text = h("textarea", { class: "input", rows: 4, placeholder: "The work, e.g. \"Set up the Bicep and Azure DevOps pipeline for our order service: AKS, Service Bus and Cosmos DB, with private endpoints.\"" });
+    const projects = Object.entries(state.config?.projects || {});
+    const project = h("select", { class: "select" }, [["", "No project (a folder of its own)"], ...projects.map(([id, p]) => [id, p.name || id])].map(([v, l]) => h("option", { value: v }, l)));
+    let unrestricted = false;
+    return h("div", { class: "spec-work" },
+      h("p", { class: "muted" }, `A work session ${data.title} leads: it writes the plan and the acceptance criteria, other agents implement where that's cheaper, and it reviews everything that produces code or infrastructure. You approve the plan before anything runs.`),
+      h("div", { class: "field" }, h("label", {}, "The work"), text),
+      h("div", { class: "field" }, h("label", {}, "Where"), project),
+      h("label", { class: "switch-row" }, h("button", { class: "switch danger", role: "switch", type: "button", "aria-checked": "false",
+        onclick: (e) => { unrestricted = !unrestricted; e.currentTarget.setAttribute("aria-checked", String(unrestricted)); } }), "Skip permissions"),
+      h("button", { class: "btn primary", onclick: async (e) => {
+        if (!text.value.trim()) { toast("Say what the work is.", "error"); return; }
+        let password = "";
+        if (unrestricted) {
+          password = await askPassword({ title: "Start without permission checks?", body: "The lead and the agents it wakes will run every command without asking.", confirm: "Start Unrestricted" });
+          if (password === null) return;
+        }
+        let opened = null;
+        await runAction(e.currentTarget, async () => (opened = await bridge.call("specialist_work", { specialist_id: sid, text: text.value.trim(), project: project.value, unrestricted, password })));
+        if (opened?.workspace) { await pollLive(); location.hash = `#work/${opened.workspace}`; }
+      } }, icon("play"), "Start"));
+  }
+
+  function notesPane() {
+    const names = Object.fromEntries((data.role_map?.topics || []).map((t) => [`${t.id}.md`, t.name]));
+    return h("div", {}, h("p", { class: "muted" }, "What it studied, one note per topic, with playbooks, trade-offs, pitfalls and sources. It reads these before it answers or builds."),
+      h("div", { class: "rows" }, data.notes_files.map((file) => h("button", { type: "button", class: "draft-row spec-note-row", onclick: async () => {
+        let res;
+        try { res = await bridge.call("specialist_note", { specialist_id: sid, name: file }); } catch (error) { toast(error.message, "error"); return; }
+        openDialog((close) => h("form", { class: "spec-note", onsubmit: (e) => { e.preventDefault(); close(); } },
+          h("h2", {}, names[file] || (file === "index.md" ? "Index" : file)), h("div", { class: "spec-note-body" }, noteBody(res.text)),
+          h("div", { class: "dialog-actions" }, h("button", { type: "submit", class: "btn primary" }, "Close"))), { wide: true });
+      } }, icon(file === "index.md" ? "list-bullets" : "file-text"), h("span", {}, names[file] || (file === "index.md" ? "Index: where everything is" : file))))));
+  }
+
+  function updatesPane() {
+    const r = data.refresh || {};
+    const last = data.refreshed_at ? ago(data.refreshed_at) : "never";
+    return h("div", {},
+      h("p", { class: "muted" }, `Its notes were last checked ${last}. Every month it checks what changed in its field (new versions, retirements, new practices) and proposes a refresh. The refreshed notes replace the old ones only if it passes its exam on them.`),
+      r.status === "ready" ? h("div", { class: "callout spec-callout" }, h("strong", {}, "A refresh is waiting for you. "), r.summary || "",
+        h("ul", { class: "spec-list" }, (r.changes || []).map((c) => h("li", {}, h("b", {}, c.topic.replace(/^new:/, "New: ")), `: ${c.what}`, c.why ? h("span", { class: "faint" }, ` (${c.why})`) : null))),
+        h("div", { class: "controls-line" },
+          h("button", { class: "btn primary small", onclick: (e) => runAction(e.currentTarget, () => bridge.call("decide_specialist_refresh", { specialist_id: sid, approve: true })).then(load) }, icon("check"), "Refresh It"),
+          h("button", { class: "btn ghost small", onclick: (e) => runAction(e.currentTarget, () => bridge.call("decide_specialist_refresh", { specialist_id: sid, approve: false })).then(load) }, "Not Now")))
+        : r.status ? h("p", {}, specialistPill("studying"), " ", { checking: "Checking what changed…", studying: "Studying the changes…", examining: "Taking its exam on the new notes…" }[r.status] || r.status)
+        : h("button", { class: "btn", onclick: (e) => runAction(e.currentTarget, () => bridge.call("check_specialist_updates", { specialist_id: sid })).then(load) }, icon("arrows-clockwise"), "Check for Updates Now"));
+  }
+
+  function notebookPane() {
+    const nb = data.notebook || {};
+    const kinds = { audio: "Audio Overview", quiz: "Quiz", flashcards: "Flashcards", study_guide: "Study Guide", slide_deck: "Slide Deck" };
+    return h("div", {},
+      h("p", { class: "muted" }, "Its notes and its field's official sources as a NotebookLM notebook, for audio overviews, quizzes and flashcards. It can also ask the notebook for answers grounded in those sources. This uses the unofficial notebooklm-py with your Google sign-in, so it can stop working when Google changes NotebookLM."),
+      nb.error ? h("p", { class: "error" }, nb.error) : null,
+      nb.id ? h("p", {}, h("button", { class: "btn", onclick: () => openUrl(nb.url) }, icon("arrow-square-out"), "Open in NotebookLM"), " ",
+        h("span", { class: "faint" }, `${nb.sources} sources · synced ${ago(nb.synced_at)}`)) : null,
+      h("div", { class: "controls-line" },
+        h("button", { class: "btn small", onclick: (e) => runAction(e.currentTarget, () => bridge.call("sync_specialist_notebook", { specialist_id: sid })).then(load) },
+          icon("upload-simple"), nb.id ? "Send Its Notes Again" : "Make Its Notebook"),
+        nb.id ? Object.entries(kinds).map(([kind, label]) => h("button", { class: "btn small ghost",
+          onclick: (e) => runAction(e.currentTarget, () => bridge.call("specialist_notebook_make", { specialist_id: sid, kind })) }, label)) : null),
+      h("p", { class: "faint", style: "font-size:12px" }, "Not connected? Connect NotebookLM on the Specialists tab first."));
+  }
+
+  viewCleanup = () => clearTimeout(timer);
+  load();
+};
+
 views.swarm = (root, alive, agentId) => {
   if (agentId) { evaluationPage(root, alive, agentId); return; }
   let query = "";
@@ -4926,7 +5343,24 @@ const ATLAS_SVG = `<svg viewBox="0 0 48 48"><circle class="part ring" cx="24" cy
   <path fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="1.4" stroke-linecap="round" d="M31.2 29.4a8 8 0 0 1-3.6 3.6"/></g></svg>`;
 
 const PERSONA_FACES = { lago: OTTER_SVG, chip: CHIP_SVG, atlas: ATLAS_SVG };
-const personaFace = (id) => PERSONA_FACES[id] || OTTER_SVG;
+/* Marina, Ada and Iris: the same drawings in their own colours. "fur" is the otter's (his is the
+   accent); "colours" swaps one colour of the drawing for another. Plain JSON, because
+   android/persona-faces.py reads it too. */
+const PERSONA_RECOLOURS = {
+  "marina": {"face": "lago", "fur": "#E57F9F"},
+  "ada": {"face": "chip", "colours": {"#ddd3bb": "#e6d9f2", "#cfc4a9": "#d5c4e8", "#b9ad92": "#bca6d8",
+    "#a49880": "#a08bc2", "#8f846d": "#8a74ad", "#10241d": "#2a1033", "#7dffb0": "#ff8fd8", "#ff9d3c": "#7fe7ff"}},
+  "iris": {"face": "atlas", "colours": {"#9a722e": "#8c5a6b", "#ecc97a": "#f4b8c8", "#c99a45": "#c97b8e",
+    "#f2d48f": "#f9d3dd", "#17324a": "#3a1840", "#8fe3ff": "#ff9be6"}}
+};
+function personaFace(id) {
+  const recolour = PERSONA_RECOLOURS[id];
+  if (!recolour) return PERSONA_FACES[id] || OTTER_SVG;
+  let svg = PERSONA_FACES[recolour.face];
+  for (const [from, to] of Object.entries(recolour.colours || {})) svg = svg.replaceAll(from, to);
+  if (recolour.fur) svg = svg.replace("<svg ", `<svg style="color:${recolour.fur};--muzzle:color-mix(in srgb, ${recolour.fur} 28%, #ffffff)" `);
+  return svg;
+}
 
 function lagoOrb(size = "", persona = state.persona) {
   const orb = h("span", { class: `orb ${size}`, "aria-hidden": "true", dataset: { state: "off", persona: persona || "lago" } });
@@ -5191,7 +5625,7 @@ views.orchestrator = (root, alive) => {
     h("section", { class: "lago-main" },
       h("header", { class: "lago-hero" }, orb, h("div", { class: "lago-title" },
         h("div", { class: "lago-name" }, h("h1", { "data-lago-name": "" }, lagoName()),
-          featureOn("personas") ? h("button", { type: "button", class: "btn small ghost", title: "Choose who you talk to: Lago, Chip or Atlas", onclick: () => personaDialog() }, icon("user-switch"), "Switch") : null),
+          featureOn("personas") ? h("button", { type: "button", class: "btn small ghost", title: "Choose who you talk to", onclick: () => personaDialog() }, icon("user-switch"), "Switch") : null),
         mood), tools),
       needsSlot, chat, focusBar, talk.el),
     side));
@@ -5430,14 +5864,41 @@ views.orchestrator = (root, alive) => {
           finished.length ? h("button", { class: "btn small ghost", title: "Close every finished run (their results stay in History)",
             onclick: () => closeRuns(finished) }, icon("x"), "Clear finished") : null)),
         h("div", { class: "task-list" }, data.runs.map(runRow))] : null,
-      h("h2", { class: "side-title" }, "Tasks", h("span", { class: "faint" }, data.sessions.length || "")),
+      h("h2", { class: "side-title" }, "Tasks", h("span", { class: "side-actions" },
+        h("span", { class: "faint" }, data.sessions.length || ""),
+        data.sessions.some((s) => s.live === "solved") ? h("button", { class: "btn small ghost", title: "Close every task that's fully done (they stay in History)",
+          onclick: closeFinished }, icon("x"), "Close finished") : null)),
       data.sessions.length ? h("div", { class: "task-list" }, data.sessions.map(sessionRow))
         : h("p", { class: "faint side-empty" }, "None open. Ask Lago to start one."),
-      data.schedules.length ? [h("h2", { class: "side-title" }, "Reminders", h("span", { class: "faint" }, data.schedules.length)),
+      data.schedules.length ? [h("h2", { class: "side-title" }, "Reminders", h("span", { class: "side-actions" },
+          h("span", { class: "faint" }, data.schedules.length),
+          data.schedules.length > 1 ? h("button", { class: "btn small ghost", title: "Cancel every reminder", onclick: cancelReminders }, icon("x"), "Cancel all") : null)),
         h("div", { class: "task-list" }, data.schedules.map(scheduleRow))] : null,
-      h("h2", { class: "side-title" }, "Reports"),
+      h("h2", { class: "side-title" }, "Reports", data.events.length ? h("span", { class: "side-actions" },
+        h("button", { class: "btn small ghost", title: "Clear the list (Lago and each task's history keep them)", onclick: () => clearReports() }, icon("broom"), "Clear")) : null),
       data.events.length ? h("div", { class: "timeline reports" }, data.events.map(reportItem))
         : h("p", { class: "faint side-empty" }, "Tasks report here when they finish, need an answer or have a plan for you."));
+  }
+
+  async function clearReports(report) {
+    data.events = report ? data.events.filter((e) => e !== report) : [];
+    renderSide();
+    await runAction(null, () => bridge.call("clear_reports", report ? { event_ids: [report.id] } : {}));
+    pollLive();
+  }
+
+  async function closeFinished() {
+    const done = data.sessions.filter((s) => s.live === "solved");
+    if (!(await confirmDialog({ title: `Close ${done.length} finished task${done.length === 1 ? "" : "s"}?`,
+      body: done.map((s) => s.title).join(", "), confirm: "Close" }))) return;
+    await runAction(null, () => bridge.call("close_finished_workspaces"));
+    load();
+  }
+
+  async function cancelReminders() {
+    if (!(await confirmDialog({ title: `Cancel all ${data.schedules.length} reminders?`, body: "Lago won't do or tell you any of them.", confirm: "Cancel All", danger: true }))) return;
+    await runAction(null, () => bridge.call("cancel_all_schedules"));
+    load();
   }
 
   async function closeRuns(runs) {
@@ -5508,7 +5969,9 @@ views.orchestrator = (root, alive) => {
         e.kind === "decided" ? decisionVerdict(e) : null,
         e.kind === "question" && e.form && !e.answered_at ? questionForm(e, JSON.parse(e.form), () => load()) : null,
         e.kind === "question" && e.answered_at ? h("span", { class: "faint" }, "Answered.") : null),
-      h("span", { class: "when" }, ago(e.created_at)));
+      h("span", { class: "when" }, ago(e.created_at),
+        h("button", { type: "button", class: "btn icon ghost small report-clear", title: "Clear this report", "aria-label": `Clear report: ${label}`,
+          onclick: () => clearReports(e) }, icon("x"))));
   }
 
   function decisionVerdict(e) {
@@ -5597,6 +6060,8 @@ views.orchestrator = (root, alive) => {
         data.voices.filter((o) => o.offline).map((o) => h("option", { value: o.id, selected: o.id === v.fallback }, o.label)));
       const effectSelect = h("select", { id: "v-effect", class: "select", onchange: (e) => { v.effect = e.target.value; } },
         data.effects.map((o) => h("option", { value: o.id, selected: o.id === v.effect }, o.label)));
+      const languageSelect = h("select", { id: "v-language", class: "select", onchange: (e) => { v.language = e.target.value; } },
+        (data.languages || []).map((o) => h("option", { value: o.id, selected: o.id === (v.language || "") }, o.label)));
       const rate = h("input", { id: "v-rate", class: "input", type: "number", min: -100, max: 100, step: 10, value: v.rate, onchange: (e) => { v.rate = Number(e.target.value); } });
       const volume = h("input", { id: "v-volume", class: "input", type: "number", min: 25, max: 200, step: 25, value: v.volume ?? 100, onchange: (e) => { v.volume = Number(e.target.value); } });
       const from = h("input", { id: "v-from", class: "input", type: "time", value: v.quiet_from, onchange: (e) => { v.quiet_from = e.target.value; } });
@@ -5640,7 +6105,9 @@ views.orchestrator = (root, alive) => {
           soundField("v-sent-sound", "When he's heard you", "sent_sound")),
         h("div", { class: "inline-row", style: "grid-template-columns:2fr 2fr 1fr 1fr" }, field("Voice", voiceSelect),
           field("When it's offline", fallbackSelect), field("Speed", rate), field("Volume %", volume)),
-        field("Voice effect", effectSelect, "Played on top of the voice. Not available for eSpeak."),
+        h("div", { class: "inline-row", style: "grid-template-columns:1fr 1fr" },
+          field("Voice effect", effectSelect, "Played on top of the voice. Not available for eSpeak."),
+          field("Language", languageSelect, `Another language speaks with an offline voice for it, and ${lagoName()} writes in it too. Or ask him: "talk to me in Portuguese".`)),
         h("div", { class: "inline-row", style: "grid-template-columns:1fr 1fr" }, field("Quiet from", from), field("Quiet until", to)),
         h("p", { class: "help faint", style: "margin-top:-8px;font-size:12.5px" }, "During quiet hours nothing is spoken. Leave both empty for none."),
         h("div", { class: "field" }, h("span", { class: "label" }, "Speak when a session"), kinds),

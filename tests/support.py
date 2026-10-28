@@ -47,6 +47,7 @@ config_store.CONFIG_PATH = TMP / "config.json"
 import runner  # noqa: E402
 import voice  # noqa: E402
 
+REAL_SAY = voice.say  # for a test that checks the command it would run (it mocks Popen)
 voice.say = lambda *a, **k: False
 voice.play_file = lambda *a, **k: None
 REAL_TMUX = runner.tmux  # for a test that runs tmux on a server of its own (it sets runner.SOCKET first)

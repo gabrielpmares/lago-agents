@@ -39,6 +39,7 @@ USAGE_MOVED_TEXT = ("[Lago] Your previous Claude account ran out of usage, so th
 # a run folder, its tools the agent never gets).
 REA_MCP = "rea-agents@6.4.0"
 REA_NODE = "node@22"
+PERPLEXITY_MCP = "@perplexity-ai/mcp-server@1.3.0"
 MCP_SERVERS = {
     "playwright": (
         # Headless Chromium with a fresh profile per run (no saved logins), no screenshots
@@ -61,6 +62,12 @@ MCP_SERVERS = {
          "capture_electron_scenario", "capture_browser_scenario", "install_adb_package",
          "uninstall_adb_package", "push_adb_file", "start_adb_app", "start_adb_activity",
          "stop_adb_app"),
+    ),
+    # Perplexity's research (specialists' builders use it), only once you've saved a
+    # PERPLEXITY_API_KEY secret: the server reads it from the session's environment.
+    "perplexity": (
+        lambda run_dir: {"type": "stdio", "command": "npx", "args": ["-y", PERPLEXITY_MCP]},
+        (),
     ),
 }
 
@@ -219,7 +226,13 @@ def _system_prompt(config, agent_id, definition):
     ]
     if agent.get("role"):
         lines.append(f"Your role here: {agent['role']}")
-    if agent.get("direct"):
+    if agent.get("tutor"):
+        lines.append(f"This is your own conversation with {config.get('user_name') or 'the human'}, "
+                     "who comes to you as the expert in your field: each task is a question or a "
+                     "piece of work from them (or from Lago on their behalf), and the conversation "
+                     "carries on from one to the next, so build on what you've already told them. "
+                     f"Exercises and files go in {config_store.team_cwd(config, agent)}.")
+    elif agent.get("direct"):
         lines.append(f"You are a swarm agent, woken by Lago (the human's assistant) for one "
                      f"task, in {config_store.team_cwd(config, agent)}. Do just that task; "
                      "there's no pipeline or Conductor.")
@@ -276,6 +289,9 @@ def _system_prompt(config, agent_id, definition):
             "- Give each task everything the report needs: goal, inputs (file paths), expected "
             "output and where to write it. Reports don't see your conversation.",
         ]
+    if definition and definition.get("knowledge"):
+        lines += ["", "## Your knowledge base",
+                  f"Your notes are in {definition['knowledge']}: start with its index.md."]
     prompt = "\n".join(lines)
     if definition and definition["body"]:
         prompt = definition["body"] + "\n\n" + prompt
@@ -295,6 +311,8 @@ def _settings(definition, orchestrator=False, connectors_allowed=()):
         hooks[event] = [entry]
     allow = ["mcp__lago", f"Read(/{attachments.FOLDER}/**)"] \
         + [f"mcp__{name}" for name in _mcp_servers(definition)] + list(connectors_allowed)
+    if (definition or {}).get("knowledge"):  # a specialist reads its notes, outside its folder
+        allow.append(f"Read(/{definition['knowledge']}/**)")
     if orchestrator:
         # Lago looks quick facts up himself: a separate researcher costs him two more turns.
         allow += ["WebSearch", "WebFetch"]
@@ -359,7 +377,15 @@ def mcp_command_ok(command):
 
 
 def mcp_server(name):
+    if name == "perplexity" and not perplexity_ready():
+        return None
     return MCP_SERVERS.get(name) or registered_mcp(name)
+
+
+def perplexity_ready():
+    """Whether a secret for every agent gives PERPLEXITY_API_KEY."""
+    import vault
+    return any(row["env"] == "PERPLEXITY_API_KEY" and not row["project"] for row in vault.secrets())
 
 
 def _mcp_servers(definition):
@@ -430,8 +456,8 @@ def start(agent_id, fresh=False, initial_text=None, keep_session=False, carry=Tr
     has_reports = bool(config_store.reports_of(config, agent_id)) or bool(agent.get("conductor")) \
         or bool(agent.get("orchestrator"))
     if agent.get("swarm") and not agent.get("conductor") and not agent.get("orchestrator") \
-            and not keep_session:
-        fresh = True  # every pipeline step starts from a clean conversation
+            and not agent.get("tutor") and not keep_session:
+        fresh = True  # every pipeline step starts from a clean conversation; a tutor keeps its own
 
     previous = hub.get_state(agent_id).get("session_id")
     prompt = _system_prompt(config, agent_id, definition)
@@ -687,6 +713,14 @@ def wait_for_usage(agent_id, config):
     return at
 
 
+def has_unfinished_work(agent_id):
+    """Whether waking the agent after a usage limit does anything: Lago always has his
+    conversation; any other agent only while one of its tasks is still open."""
+    if agent_id == config_store.ORCHESTRATOR_ID:
+        return True
+    return any(t["status"] != "blocked" for t in hub.open_tasks_for(agent_id))
+
+
 def resume_after_reset(now=None):
     """Agents that stopped because every account was out of usage: once a limit has reset,
     each carries on where it left off, on the account with room."""
@@ -711,6 +745,8 @@ def resume_after_reset(now=None):
         accounts.make_active(config, account)
     for agent_id in due:
         hub.set_state(agent_id, usage_wait=None)
+        if not has_unfinished_work(agent_id):
+            continue  # it finished before the limit: waking it re-reads its whole conversation for nothing
         if not runner.is_running(agent_id):
             # A run whose task is still open would sit there forgotten: carry it on. Anything
             # else stopped since starts on the account with room when next needed.

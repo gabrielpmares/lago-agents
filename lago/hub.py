@@ -447,6 +447,7 @@ MIGRATIONS = (("swarm_agents", "workspace", "INTEGER"), ("pipelines", "workspace
               ("events", "form", "TEXT"),  # a question's choices (questions.py), JSON
               ("events", "answer", "TEXT"),  # and how it was answered, JSON
               ("events", "answered_at", "REAL"),
+              ("events", "cleared", "INTEGER NOT NULL DEFAULT 0"),  # off Lago's Reports list
               ("workspaces", "goal_id", "INTEGER"),  # the goal it serves (goals.py)
               ("tasks", "blocked_by", "TEXT"),  # JSON task ids it waits on (tickets.py)
               ("tasks", "labels", "TEXT"),  # JSON list of short tags
@@ -744,6 +745,17 @@ def events(where="1", params=(), limit=100):
         rows = conn.execute(f"SELECT * FROM events WHERE {where} ORDER BY id DESC LIMIT ?",
                             (*params, limit))
         return [dict(row) for row in rows]
+
+
+def clear_events(event_ids=None):
+    """Take reports off Lago's Reports list (all of them without `event_ids`). They stay in
+    the database, for Lago's `reports` tool and each session's history, and count as seen."""
+    with connect() as conn:
+        if event_ids is None:
+            conn.execute("UPDATE events SET cleared = 1, seen = 1 WHERE cleared = 0")
+        else:
+            ids = [int(i) for i in event_ids]
+            conn.executemany("UPDATE events SET cleared = 1, seen = 1 WHERE id = ?", [(i,) for i in ids])
 
 
 def mark_events_seen(workspace=None):

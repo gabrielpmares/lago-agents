@@ -51,6 +51,13 @@ jobs:
             --out "$RUNNER_TEMP/chip" -- "Hi, I'm Chip."
           ls -l "$RUNNER_TEMP"/chip.*
           test -s "$(ls "$RUNNER_TEMP"/chip.* | head -1)"
+          # The women's voice, and Portuguese: Kokoro's (Marina's) and Piper's (Chip's and Atlas's)
+          for spoken in "kokoro:bf_isabella|marina|Hi, I'm Marina." "kokoro:pf_dora@pt|marina-pt|Olá, eu sou a Marina." \
+                        "piper:pt_BR-cadu-medium|chip-pt|Olá, eu sou o Chip."; do
+            IFS='|' read -r who out words <<< "$spoken"
+            "$HOME/.local/share/lago-agents/tts/bin/python" lago/speak.py --voice "$who" --out "$RUNNER_TEMP/$out" -- "$words"
+            test -s "$(ls "$RUNNER_TEMP/$out".* | head -1)"
+          done
       - name: The installer makes the app and its background service
         if: success() || failure()
         run: |

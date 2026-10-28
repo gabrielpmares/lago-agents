@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Made by android/persona-faces.py from lago/ui/app.js: change the face there. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="48" android:viewportHeight="48">
+    <path android:pathData="M22.8,6h2.4v3.6h-2.4z"
+        android:fillColor="#8C5A6B" />
+    <path android:pathData="M4.2,25a3.6,3.6 0 1,0 7.2,0a3.6,3.6 0 1,0 -7.2,0z"
+        android:fillColor="#3A1840"
+        android:strokeColor="#F4B8C8"
+        android:strokeWidth="1.6" />
+    <path android:pathData="M36.6,25a3.6,3.6 0 1,0 7.2,0a3.6,3.6 0 1,0 -7.2,0z"
+        android:fillColor="#3A1840"
+        android:strokeColor="#F4B8C8"
+        android:strokeWidth="1.6" />
+    <path android:pathData="M11 37h26l1.6 7.2H9.4z"
+        android:fillColor="#8C5A6B" />
+    <path android:pathData="M12.9,40.6a1.1,1.1 0 1,0 2.2,0a1.1,1.1 0 1,0 -2.2,0z"
+        android:fillColor="#F4B8C8" />
+    <path android:pathData="M22.9,40.6a1.1,1.1 0 1,0 2.2,0a1.1,1.1 0 1,0 -2.2,0z"
+        android:fillColor="#F4B8C8" />
+    <path android:pathData="M32.9,40.6a1.1,1.1 0 1,0 2.2,0a1.1,1.1 0 1,0 -2.2,0z"
+        android:fillColor="#F4B8C8" />
+    <path android:pathData="M7.5,25a16.5,16.5 0 1,0 33,0a16.5,16.5 0 1,0 -33,0z"
+        android:fillColor="#C97B8E" />
+    <path android:pathData="M12.6 18.2A13.5 13.5 0 0 1 22 11.6"
+        android:strokeColor="#F9D3DD"
+        android:strokeWidth="2"
+        android:strokeAlpha="0.75"
+        android:strokeLineCap="round" />
+    <path android:pathData="M22.9,11.6a1.1,1.1 0 1,0 2.2,0a1.1,1.1 0 1,0 -2.2,0z"
+        android:fillColor="#F4B8C8" />
+    <path android:pathData="M36.3,25a1.1,1.1 0 1,0 2.2,0a1.1,1.1 0 1,0 -2.2,0z"
+        android:fillColor="#F4B8C8" />
+    <path android:pathData="M22.9,38.4a1.1,1.1 0 1,0 2.2,0a1.1,1.1 0 1,0 -2.2,0z"
+        android:fillColor="#F4B8C8" />
+    <path android:pathData="M9.5,25a1.1,1.1 0 1,0 2.2,0a1.1,1.1 0 1,0 -2.2,0z"
+        android:fillColor="#F4B8C8" />
+    <path android:pathData="M13.6,25a10.4,10.4 0 1,0 20.8,0a10.4,10.4 0 1,0 -20.8,0z"
+        android:fillColor="#3A1840"
+        android:strokeColor="#F4B8C8"
+        android:strokeWidth="2.6" />
+    <path android:pathData="M17.4 20.2a8 8 0 0 1 5-4.2"
+        android:strokeColor="#FFF"
+        android:strokeWidth="1.8"
+        android:strokeAlpha="0.22"
+        android:strokeLineCap="round" />
+    <path android:pathData="M31.2 29.4a8 8 0 0 1-3.6 3.6"
+        android:strokeColor="#FFF"
+        android:strokeWidth="1.4"
+        android:strokeAlpha="0.12"
+        android:strokeLineCap="round" />
+</vector>

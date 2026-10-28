@@ -2,11 +2,14 @@
 """Synthesize one announcement, give it a robot effect, and play it after a chime.
 
 voice.py runs this with the Python of the TTS venv (~/.local/share/lago-agents/tts), which
-has edge-tts (Microsoft's online neural voices, free, no key) and kokoro-onnx (an offline
-model in ~/.local/share/lago-agents/kokoro). When the voice fails (say, Edge while offline)
+has edge-tts (Microsoft's online neural voices, free, no key), kokoro-onnx (an offline
+model in ~/.local/share/lago-agents/kokoro) and piper-tts (offline voices, one model file
+each, in ~/.local/share/lago-agents/piper: Chip's and Atlas's Portuguese). When the voice fails (say, Edge while offline)
 the fallback voice speaks instead. Effects are ffmpeg audio filters, and ffmpeg then brings
 the speech up to a steady loudness (the voices come out quiet, and the effects make them
 quieter still); without ffmpeg, or if the filter fails, the plain voice plays.
+
+A Kokoro voice in another language carries it after an @ (kokoro:pm_santa@pt, languages.py).
 
     speak.py --voice kokoro:bm_george --fallback kokoro:bm_lewis [--effect retro-computer]
              [--rate 10] [--volume 100] [--chime [SOUND]] [--out PATH] -- TEXT
@@ -39,9 +42,11 @@ import threading
 from pathlib import Path
 
 KOKORO_DIR = Path.home() / ".local" / "share" / "lago-agents" / "kokoro"
+PIPER_DIR = Path.home() / ".local" / "share" / "lago-agents" / "piper"
 CHIME = "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"
 EDGE_TIMEOUT_SECONDS = 8
-# Every effect starts from 24 kHz, the rate Kokoro and Edge both produce.
+# Every effect starts from 24 kHz, the rate Kokoro and Edge produce (Piper's 22.05 kHz is
+# brought up to it first).
 EFFECTS = {
     "ai-assistant": "chorus=0.6:0.9:20|32:0.4|0.3:0.25|0.4:2|2.3,aecho=0.8:0.6:12:0.3",
     "retro-computer": "acrusher=bits=5:samples=4:mix=0.8,lowpass=f=3500",
@@ -88,10 +93,13 @@ def edge(voice, text, rate, out):
 
 
 def kokoro(voice, text, rate, out):
+    """`voice` may end in @ and the language to pronounce it in (eSpeak's code, "pm_santa@pt");
+    without one, English: British for the b voices, American for the rest."""
     import soundfile
 
+    voice, _, lang = voice.partition("@")
     audio, sample_rate = _kokoro_model().create(text, voice=voice, speed=max(0.5, min(2.0, 1 + rate / 100)),
-                                      lang="en-gb" if voice.startswith("b") else "en-us")
+                                      lang=lang or ("en-gb" if voice.startswith("b") else "en-us"))
     soundfile.write(str(out), audio, sample_rate)
 
 
@@ -102,7 +110,23 @@ def _kokoro_model():
     return Kokoro(str(KOKORO_DIR / "kokoro-v1.0.onnx"), str(KOKORO_DIR / "voices-v1.0.bin"))
 
 
-ENGINES = {"edge": (edge, ".mp3"), "kokoro": (kokoro, ".wav")}
+def piper(voice, text, rate, out):
+    """`voice` is a model's name in PIPER_DIR ("pt_BR-cadu-medium")."""
+    import wave
+    from piper import SynthesisConfig
+
+    with wave.open(str(out), "wb") as wav:
+        _piper_model(voice).synthesize_wav(text, wav, SynthesisConfig(
+            length_scale=1 / max(0.5, min(2.0, 1 + rate / 100))))
+
+
+@functools.cache
+def _piper_model(voice):
+    from piper import PiperVoice
+    return PiperVoice.load(str(PIPER_DIR / f"{voice}.onnx"))
+
+
+ENGINES = {"edge": (edge, ".mp3"), "kokoro": (kokoro, ".wav"), "piper": (piper, ".wav")}
 
 # Lago plays as its own app with its own role, so PipeWire keeps a volume for it apart from
 # everything else's (pw-play's default role, Music, can have been turned down for another

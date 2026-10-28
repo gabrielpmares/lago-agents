@@ -15,6 +15,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
@@ -71,6 +73,9 @@ private val TINTS = mapOf(
     "lago" to Tint(Color(0xFF14453A), Color(0xFF4FB89E)),
     "chip" to Tint(Color(0xFF34301F), Color(0xFF7DFFB0)),
     "atlas" to Tint(Color(0xFF15304A), Color(0xFFECC97A)),
+    "marina" to Tint(Color(0xFF4A1F2E), Color(0xFFE57F9F)),
+    "ada" to Tint(Color(0xFF2E2140), Color(0xFFFF8FD8)),
+    "iris" to Tint(Color(0xFF3A1840), Color(0xFFF4B8C8)),
 )
 private val BOTTOM = Color(0xFF0A0E11)
 private val TEXT = Color(0xFFF3F6F5)
@@ -79,7 +84,8 @@ private val TEXT_3 = Color(0x80F3F6F5)
 private val DANGER = Color(0xFFE5484D)
 private val ANSWER = Color(0xFF2FB36B)
 private val WARN = Color(0xFFF2B84B)
-private val PEOPLE = listOf("lago" to "Lago", "chip" to "Chip", "atlas" to "Atlas")
+private val PEOPLE = listOf("lago" to "Lago", "chip" to "Chip", "atlas" to "Atlas",
+    "marina" to "Marina", "ada" to "Ada", "iris" to "Iris")
 
 /**
  * What the call screen shows: Lago (or Chip, or Atlas) ringing you, the call itself with his
@@ -276,10 +282,11 @@ private fun Heard(text: String) {
     }
 }
 
-/** Lago, Chip and Atlas: tap one to have him take the call ("let me talk to Chip" works too). */
+/** Every persona, in a row that scrolls: tap one to hand them the call ("let me talk to Ada" works too). */
 @Composable
 private fun TalkTo(current: String, enabled: Boolean, onTalkTo: (String) -> Unit) {
-    Row(Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.06f)).padding(5.dp),
+    Row(Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.06f))
+        .horizontalScroll(rememberScrollState()).padding(5.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         for ((pid, label) in PEOPLE) {
             val on = pid == current

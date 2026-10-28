@@ -19,6 +19,7 @@ CATALOG_DIR = APP_DIR / "prompts"  # the app's own prompts: Lago's and the Condu
 USER_CATALOG = config_store.DATA_DIR / "catalog"  # your agents, tests, MCP servers, pipelines
 CATALOG_AGENTS = USER_CATALOG / "agents"
 CATALOG_PIPELINES = USER_CATALOG / "pipelines"
+SPECIALISTS_DIR = USER_CATALOG / "specialists"  # their notes, role maps and exams (specialists.py)
 CONDUCTOR_FILE = CATALOG_DIR / "conductor.md"
 ORCHESTRATOR_FILE = CATALOG_DIR / "orchestrator.md"
 
@@ -200,6 +201,7 @@ def manifest(path):
         "codex_model": meta.get("codex_model", ""),
         "source": meta.get("source", ""),
         "reports_to": meta.get("reports_to", ""),  # who it answered to where it came from (an imported org chart)
+        "knowledge": meta.get("knowledge", ""),  # a specialist's notes, under SPECIALISTS_DIR
         "body": body,
         "path": str(path),
     }
@@ -227,7 +229,7 @@ AGENT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 def write_agent(agent_id, name, summary, prompt="", domain="general", extends="", inputs=None,
                 outputs=None, requires="", use_when="", avoid_when="", tags=None, tools="",
                 model="", replace=False, folder=None, mcp="", source="", skills="", runtime="", codex_model="",
-                reports_to=""):
+                reports_to="", knowledge=""):
     """Add a swarm agent to the catalog (catalog/agents/<id>.md). It belongs to no project:
     any Conductor can wake it. With `folder`, write it there as agent.md instead (a draft
     for you to approve). Returns its path."""
@@ -280,6 +282,8 @@ def write_agent(agent_id, name, summary, prompt="", domain="general", extends=""
         lines.append(f"source: {one_line(source)}")
     if reports_to:
         lines.append(f"reports_to: {one_line(reports_to)}")
+    if knowledge:
+        lines.append(f"knowledge: {one_line(knowledge)}")
     lines += ["---", "", (prompt or "").strip(), ""]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -308,7 +312,18 @@ def resolve(entry, project_dir=None):
         "body": body,
         "path": entry["path"],
         "base_path": (base or {}).get("path"),
+        "knowledge": knowledge_dir(entry),
     }
+
+
+def knowledge_dir(entry):
+    """The folder of a specialist's notes, or "" (only folders under SPECIALISTS_DIR count)."""
+    name = (entry.get("knowledge") or "").strip()
+    if not name:
+        return ""
+    root = SPECIALISTS_DIR.resolve()
+    path = (root / name).resolve()
+    return str(path) if root in path.parents else ""
 
 
 def pipeline_templates():

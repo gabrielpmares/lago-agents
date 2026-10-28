@@ -422,9 +422,10 @@ the right. His terminal shows on request (the terminal button).
   off, in Settings), it records until you pause, the small model transcribes it (and must
   hear the phrase too) and it goes to Lago as a spoken message. All on this computer: nothing
   is sent anywhere or saved, and it ignores the mic while Lago speaks or push-to-talk records.
-  About 0.5% of a CPU core while listening. Each persona also answers to his own name ("Hey
-  Chip", "Hey Atlas"): calling another one switches Lago to him (same memory and work) and he
-  answers; switch that off in Settings to answer only your own phrase. `lago/listen.py --test`
+  About 0.5% of a CPU core while listening. Each persona also answers to their own name ("Hey
+  Chip", "Hey Atlas", and the women, "Hey Marina", "Hey Ada", "Hey Iris": the otter, Chip and
+  Atlas in their own colours, with women's voices): calling another one switches Lago to them
+  (same memory and work) and they answer; switch that off in Settings to answer only your own phrase. `lago/listen.py --test`
   prints what it hears, and `journalctl --user -u lago-agents-listen -f` shows what woke it.
 - **Permission prompts go to Lago first.** When an agent in a session Lago opened (or a
   run he started) stops at a permission prompt, Lago Agents tells only Lago, with what it
@@ -471,6 +472,11 @@ the right. His terminal shows on request (the terminal button).
   A robot effect (ffmpeg filters in `speak.py`: AI assistant, Retro computer, the default, or
   Deep robot) goes on top. **Settings** on Lago's page picks the voice, the offline fallback,
   the effect, speed, quiet hours and which reports speak. The same news from the same session isn't repeated within 90 seconds.
+  **Other languages.** Say "talk to me in Portuguese" (or pick a **Language** in Settings) and
+  whichever persona you're talking to switches to an offline Kokoro voice for it, keeping his
+  effect, and writes his replies in it too (`languages.py`, his `speak_language` tool):
+  Portuguese (Portugal or Brazil), Spanish, French, Italian, Hindi, Japanese or Chinese, with
+  no extra download. "Talk in English" switches back.
 
 ## The swarm catalog
 
@@ -485,6 +491,16 @@ the right. His terminal shows on request (the terminal button).
   are on for every agent. Both are listed in the Swarm page.
 - **Templates.** `catalog/pipelines/*.md` are proven pipeline shapes the Conductor starts
   from.
+- **Specialists** (Agents, Specialists tab). Agents that work and teach like a professional
+  in one role. You narrow a field down to a job, for example IT & Software › Backend ›
+  .NET Backend Engineer › .NET cloud engineer on Azure. Lago maps what the role really
+  involves from job postings and certification outlines, and you approve that map. It then
+  studies each topic into notes with playbooks and sources, and writes an exam. The
+  specialist can be used only once it passes. You ask it anything in its own ongoing
+  conversation, or give it work in a session it leads. Each month it proposes a refresh,
+  which has to pass the exam too. Perplexity (an API key) and NotebookLM (the unofficial
+  notebooklm-py, signed in with your Google account) are optional. See
+  `docs/specialists.md`.
 
 ## Coming from Paperclip
 

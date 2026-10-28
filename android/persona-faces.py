@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Lago, Chip and Atlas's faces for the phone app, from the desktop's (OTTER_SVG, CHIP_SVG and
-ATLAS_SVG in lago/ui/app.js), so there is one drawing of each. Run it after changing a face:
+"""The personas' faces for the phone app, from the desktop's (OTTER_SVG, CHIP_SVG and ATLAS_SVG
+in lago/ui/app.js, and Marina, Ada and Iris, the same in other colours: PERSONA_RECOLOURS), so
+there is one drawing of each. Run it after changing a face:
 
     python3 persona-faces.py
 
@@ -8,6 +9,7 @@ Each face is split into the layers the app moves on its own (PersonaFace.kt): th
 eyes (they blink), smile, open mouth (it talks), Chip's antenna bulb and Atlas's window glow.
 The ring and the asleep eyes are left out; the app draws its own rings.
 """
+import json
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -20,17 +22,28 @@ FACES = {"lago": "OTTER_SVG", "chip": "CHIP_SVG", "atlas": "ATLAS_SVG"}
 # styles.css: the otter's fur is the accent, his eyes and nose a dark ink, his muzzle a pale fur.
 FUR = "#4FB89E"
 INK = "#0C1915"
-MUZZLE = "#" + "".join(f"{round(int(FUR[i:i + 2], 16) * 0.28 + 255 * 0.72):02X}" for i in (1, 3, 5))
+
+
+def muzzle(fur):
+    """A pale fur: 28% of it over white, as styles.css mixes it."""
+    return "#" + "".join(f"{round(int(fur[i:i + 2], 16) * 0.28 + 255 * 0.72):02X}" for i in (1, 3, 5))
+
+
 LAYERS = ("eyes", "smile", "mouth", "bulb", "glow")
 DROP = {"ring", "shut"}
 CLASS_LAYER = {"eyes": "eyes", "smile": "smile", "open": "mouth", "bulb": "bulb", "glow": "glow"}
 
 
-def svg_of(name, source):
+def svg_text(name, source):
     found = re.search(r"const " + name + r" = `(.*?)`;", source, re.S)
     if not found:
         raise SystemExit(f"{name} isn't in app.js any more")
-    return ET.fromstring(found.group(1))
+    return found.group(1)
+
+
+def recolours(source):
+    found = re.search(r"const PERSONA_RECOLOURS = (\{.*?\n\});", source, re.S)
+    return json.loads(found.group(1)) if found else {}
 
 
 def number(value):
@@ -56,14 +69,14 @@ def shape(element):
     raise SystemExit(f"a <{tag}> in a face: teach persona-faces.py to draw it")
 
 
-def style(element, inherited):
+def style(element, inherited, fur):
     """The paint for an element: its own attributes, its classes (styles.css), then its group's."""
     paint = dict(inherited)
     classes = set(element.get("class", "").split())
     if "ink" in classes:
         paint["fill"] = INK
     if "muzzle" in classes:
-        paint["fill"] = MUZZLE
+        paint["fill"] = muzzle(fur)
     if "ink-line" in classes:
         paint.update(fill="none", stroke=INK, linecap="round")
     for attr, key in (("fill", "fill"), ("stroke", "stroke"), ("stroke-width", "width"),
@@ -72,19 +85,19 @@ def style(element, inherited):
         if element.get(attr) is not None:
             paint[key] = element.get(attr)
     if paint.get("fill") == "currentColor":
-        paint["fill"] = FUR
+        paint["fill"] = fur
     return paint
 
 
-def walk(element, paint, layer, out):
+def walk(element, paint, layer, out, fur=FUR):
     classes = set(element.get("class", "").split())
     if classes & DROP:
         return
     layer = next((CLASS_LAYER[c] for c in classes if c in CLASS_LAYER), layer)
-    paint = style(element, paint)
+    paint = style(element, paint, fur)
     if element.tag in ("svg", "g"):
         for child in element:
-            walk(child, paint, layer, out)
+            walk(child, paint, layer, out, fur)
         return
     out.setdefault(layer, []).append((shape(element), paint))
 
@@ -118,9 +131,15 @@ def vector(paths):
 
 def main():
     source = APP_JS.read_text()
-    for persona, constant in FACES.items():
+    drawings = {persona: (svg_text(constant, source), FUR) for persona, constant in FACES.items()}
+    for persona, recolour in recolours(source).items():
+        svg = svg_text(FACES[recolour["face"]], source)
+        for old, new in recolour.get("colours", {}).items():
+            svg = svg.replace(old, new)
+        drawings[persona] = (svg, recolour.get("fur", FUR))
+    for persona, (svg, fur) in drawings.items():
         layers = {}
-        walk(svg_of(constant, source), {}, "face", layers)
+        walk(ET.fromstring(svg), {}, "face", layers, fur)
         for old in OUT.glob(f"persona_{persona}_*.xml"):
             old.unlink()
         for layer, paths in layers.items():

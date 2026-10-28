@@ -377,7 +377,8 @@ WATCH = {"browser_view", "session_changes", "session_change_diff", "init", "me",
 OPERATE = {"new_task", "send_message", "press", "terminal_send", "terminal_key", "answer_question",
            "comment_task", "comment_document", "hold_session", "set_session_quiet", "give_task", "start_agent",
            "stop_agent", "open_workspace", "close_workspace", "reopen_workspace", "rate_task", "set_task",
-           "set_task_labels", "run_routine", "service_action", "dismiss_notification", "notification_opened"}
+           "set_task_labels", "run_routine", "service_action", "dismiss_notification", "dismiss_notifications",
+           "notification_opened"}
 PROJECT_ADMIN = {"decide_pipeline", "cancel_pipeline", "link_goal", "extend_budget", "stop_over_budget",
                  "secrets", "save_secret", "remove_secret", "routine_status", "pr_check", "merge_pr",
                  "server_deploy", "server_deploy_preview", "project_command", "add_status_card",

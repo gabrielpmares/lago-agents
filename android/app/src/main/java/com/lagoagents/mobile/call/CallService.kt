@@ -41,8 +41,10 @@ import org.json.JSONObject
 data class CallUi(
     val id: String? = null,
     val persona: String = "Lago",
-    /** "lago", "chip" or "atlas" (personas.py): whose face the call screen shows. */
+    /** "lago", "chip", "marina"... (personas.py): whose face the call screen shows. */
     val personaId: String = "lago",
+    /** The language to listen in, a BCP 47 tag ("pt-PT"), or "" for the phone's own. */
+    val language: String = "",
     val figure: String = "",
     /** "connecting", "listening", "thinking", "speaking" or "ended". */
     val phase: String = "connecting",
@@ -137,7 +139,8 @@ class CallService : Service() {
         _state.update {
             it.copy(id = call.optString("id", it.id), persona = persona?.optString("name") ?: it.persona,
                 personaId = persona?.optString("id")?.ifBlank { null } ?: it.personaId,
-                figure = persona?.optString("figure") ?: it.figure)
+                figure = persona?.optString("figure") ?: it.figure,
+                language = if (call.has("language")) call.optString("language") else it.language)
         }
     }
 
@@ -171,6 +174,10 @@ class CallService : Service() {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            // He talks in another language (languages.py): listen in it. Otherwise, in the
+            // phone's own language.
+            val language = state.value.language
+            if (language.isNotEmpty()) putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
         }
         runCatching { recognizer?.startListening(intent) }
     }

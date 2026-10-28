@@ -97,12 +97,23 @@ def _decode(item):
         data = base64.b64decode(encoded, validate=True)
     except ValueError:
         _refuse("That file couldn't be read", "bad base64")
+    return checked(data, item.get("name"))
+
+
+def decode(item):
+    """(kind, safe name, bytes) of one data-URL file, or AttachmentError: for files kept
+    somewhere other than this folder (a specialist's case files)."""
+    return _decode(item)
+
+
+def checked(data, name):
+    """(kind, safe name, data) when `data` is a file Lago can read and within its limit."""
     kind, extension = _kind(data)
     if not kind:
-        _refuse(REFUSED_KIND, str(item.get("name", ""))[:60])
+        _refuse(REFUSED_KIND, str(name or "")[:60])
     if len(data) > LIMITS[kind]:
         _refuse(f"{_label(kind)} can be at most {LIMITS[kind] // 1024 // 1024} MB", f"{len(data)} bytes")
-    return kind, _safe_name(item.get("name"), extension, kind), data
+    return kind, _safe_name(name, extension, kind), data
 
 
 def _kind(data):

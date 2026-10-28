@@ -12,9 +12,18 @@ Every call also carries a header a web page elsewhere can't send across origins.
 
     app_server.py [view]       serve, and open the window (a native one with pywebview,
                                else an app window in Chrome, else the default browser)
+
+Hosted (LAGO_HOSTED=1, one customer's container, see hosting/): it listens on $LAGO_PORT for
+the host's proxy, which signs in the customer before anything reaches here. Every request
+then carries who they are and when the proxy checked (X-Lago-User, X-Lago-Time) with
+X-Lago-Proof, an HMAC of both under $LAGO_PROXY_SECRET, the secret this container shares with
+the host alone. Without a proxy secret (trying the container on your own computer) it's the
+?t= secret as above, printed when it starts.
 """
 
 import fcntl
+import hashlib
+import hmac
 import json
 import os
 import pty
@@ -43,6 +52,7 @@ COOKIE = "lago_desk"
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
          ".svg": "image/svg+xml", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".png": "image/png",
          ".json": "application/json", ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg"}
+PROXY_SKEW = 120  # seconds a proxy's signature stays good: clocks drift, replays don't last
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
        "media-src 'self' blob: data:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'")
 
@@ -136,6 +146,14 @@ class Handler(BaseHTTPRequestHandler):
         return host in self.server.hosts
 
     def authed(self):
+        if self.server.proxy_secret:
+            user, at = self.headers.get("X-Lago-User") or "", self.headers.get("X-Lago-Time") or ""
+            try:
+                fresh = abs(time.time() - int(at)) <= PROXY_SKEW
+            except ValueError:
+                return False
+            given = self.headers.get("X-Lago-Proof") or ""
+            return bool(user) and fresh and hmac.compare_digest(given, proxy_proof(self.server.proxy_secret, user, at))
         cookie = SimpleCookie(self.headers.get("Cookie") or "")
         given = cookie[COOKIE].value if COOKIE in cookie else ""
         return secrets.compare_digest(given, self.server.token)
@@ -162,13 +180,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.deny(421, "Wrong host")
         url = urlsplit(self.path)
         query = parse_qs(url.query)
-        if url.path == "/" and query.get("t") and secrets.compare_digest(query["t"][0], self.server.token):
+        if url.path == "/" and query.get("t") and not self.server.proxy_secret and secrets.compare_digest(query["t"][0], self.server.token):
             # The window opens with the secret once; from then on it's a cookie no other site sees.
             view = query.get("view", [""])[0]
             return self.send(303, extra={"Location": "/" + (f"#{view}" if view else ""), "Set-Cookie":
                                          f"{COOKIE}={self.server.token}; HttpOnly; SameSite=Strict; Path=/"})
         if not self.authed():
-            return self.send(403, b"<p>Open Lago Agents from its app icon.</p>", "text/html; charset=utf-8")
+            text = b"<p>Sign in first.</p>" if self.server.proxy_secret else b"<p>Open Lago Agents from its app icon.</p>"
+            return self.send(403, text, "text/html; charset=utf-8")
         if url.path == "/v1/term":
             return self.terminal_stream(query)
         path = "index.html" if url.path in ("/", "/index.html") else url.path.lstrip("/")
@@ -279,17 +298,23 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port=0):
-        super().__init__(("127.0.0.1", port), Handler)
+    def __init__(self, port=0, address="127.0.0.1", hosts=(), proxy_secret=""):
+        super().__init__((address, port), Handler)
         self.token = secrets.token_urlsafe(32)
+        self.proxy_secret = proxy_secret
         self.api, self.api_error, _ = _page_api()
         self.terminals = {}
         port = self.server_address[1]
-        self.hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        self.hosts = {f"127.0.0.1:{port}", f"localhost:{port}", *(h.strip().lower() for h in hosts if h.strip())}
 
     @property
     def url(self):
         return f"http://127.0.0.1:{self.server_address[1]}/?t={self.token}"
+
+
+def proxy_proof(secret, user, at):
+    """What the host's proxy signs a request with: see the top of this file."""
+    return hmac.new(secret.encode(), f"{user}|{at}".encode(), hashlib.sha256).hexdigest()
 
 
 def _running():
@@ -348,6 +373,23 @@ def serve(start_view="", open_window=True):
     return server
 
 
+def serve_hosted():
+    """One customer's Lago in its container, until the container stops."""
+    port = int(os.environ.get("LAGO_PORT") or 8080)
+    server = Server(port, "0.0.0.0", os.environ.get("LAGO_HOSTS", "").split(","),
+                    os.environ.get("LAGO_PROXY_SECRET", ""))
+    import background
+    background.start_loops()
+    if server.proxy_secret:
+        print(f"Lago Agents is serving on port {port}, for the host's proxy.", flush=True)
+    else:
+        print(f"Lago Agents (no proxy secret: open it with this link)\nhttp://localhost:{port}/?t={server.token}", flush=True)
+    try:
+        server.serve_forever()
+    finally:
+        _stop(server)
+
+
 def _stop(server):
     config_store.lock_bypass()  # your password is asked again next time the app opens
     for term in list(server.terminals.values()):
@@ -357,5 +399,8 @@ def _stop(server):
 
 
 if __name__ == "__main__":
+    if config_store.HOSTED:
+        serve_hosted()
+        sys.exit()
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     serve(args[0].lstrip("#") if args else "", open_window="--no-window" not in sys.argv)

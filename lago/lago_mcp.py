@@ -19,7 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import activity  # noqa: E402
 import config_store  # noqa: E402
 import desktop  # noqa: E402
+import features  # noqa: E402
 import hub  # noqa: E402
+import languages  # noqa: E402
+import personas  # noqa: E402
 import notify  # noqa: E402
 import transcripts  # noqa: E402
 import agentdefs  # noqa: E402
@@ -395,6 +398,53 @@ ORCHESTRATOR_TOOLS = {
                        "by name only, so name the ones the task needs."},
         }, ["agent", "task"]),
     },
+    "specialists": {
+        "description": "The human's specialists: agents built to work and teach like a "
+                       "professional in one role (Specialists tab), each with its status. A live "
+                       "one is the best agent for any question or work in its field.",
+        "inputSchema": _schema({}),
+    },
+    "ask_specialist": {
+        "description": "Ask a live specialist a question in its field, or give it a small piece "
+                       "of work, in its own conversation (it remembers what it already told "
+                       "the human). Its answer comes back to you as a \"[Lago] Task #N\" message: "
+                       "pass it on in full when they asked to learn something. Give it the "
+                       "files the question is about (what the human attached, or a path they "
+                       "named): it reads Markdown, PDFs, text and pictures, and keeps them. For a "
+                       "case study they must solve and be able to explain, set case_study: it "
+                       "writes a step-by-step walkthrough document and offers to drill them.",
+        "inputSchema": _schema({"specialist": {"type": "string", "description": "Its id (specialists)."},
+                                "question": {"type": "string", "description": "The question or work, "
+                                             "in the human's words plus any context it needs."},
+                                "files": {"type": "array", "items": {"type": "string"},
+                                          "description": "Paths of files for it to read."},
+                                "case_study": {"type": "boolean", "default": False}},
+                               ["specialist", "question"]),
+    },
+    "create_specialist": {
+        "description": "Start building a specialist for a role the human named. It maps the "
+                       "role first and waits for their OK on the map before studying, so only "
+                       "after they asked for one. Takes hours and real usage: say so.",
+        "inputSchema": _schema({
+            "role": {"type": "array", "items": {"type": "string"}, "description": "From broad to "
+                     "narrow, e.g. [\"IT & Software\", \"Backend Engineering\", \".NET Backend "
+                     "Engineer\", \".NET cloud engineer on Azure\"]."},
+            "notes": {"type": "string", "description": "What they care about most: technologies, "
+                      "the job they're targeting, what they want to learn or build."},
+            "depth": {"type": "string", "enum": ["focused", "thorough"], "default": "focused"},
+        }, ["role"]),
+    },
+    "specialist_work": {
+        "description": "Open a work session a live specialist leads: it plans and sets the "
+                       "quality bar, other agents implement, and it reviews their work. For real "
+                       "work in its field that's bigger than one answer.",
+        "inputSchema": _schema({"specialist": {"type": "string"},
+                                "request": {"type": "string", "description": "The work, in full."},
+                                "project": {"type": "string", "description": "Project id, if it's "
+                                            "for one (list_projects)."},
+                                "folder": {"type": "string", "description": "Or a folder to work in."}},
+                               ["specialist", "request"]),
+    },
     "rate_run": {
         "description": "Thumbs up or down for a swarm agent you ran (run_agent), once its "
                        "result is in: up when it answered well, down when it was wrong, "
@@ -420,6 +470,26 @@ ORCHESTRATOR_TOOLS = {
                        "runs. With no agent, back to normal (\"stop using it\").",
         "inputSchema": _schema({"agent": {"type": "string", "description": "Agent id "
                                           "(find_agents); empty to stop."}}),
+    },
+    "use_persona": {
+        "description": "Become another persona when the human asks for one by name, in any "
+                       "words or language (\"I want to talk to Marina\", \"quero falar com o "
+                       "Chip\", \"put Iris on\"): your name, face, voice and manner change; "
+                       "you're the same assistant with the same memory and work. If they also "
+                       "name a language (\"... in Portuguese\"), call speak_language too. "
+                       "Personas: " + ", ".join(f"{p['name']} ({p['figure'].lower()})"
+                                                for p in personas.PERSONAS.values()) + ".",
+        "inputSchema": _schema({"persona": {"type": "string", "description": "Their name."}}, ["persona"]),
+    },
+    "speak_language": {
+        "description": "Talk with the human in another language when they ask, in any language "
+                       "(\"talk to me in Portuguese\", \"fala comigo em português\", \"háblame en "
+                       "español\"): your voice becomes an offline voice for it, with your persona's "
+                       "effect, and you write in it from then on. \"English\" to switch back. "
+                       "Portuguese without Brazil means Portugal's.",
+        "inputSchema": _schema({"language": {"type": "string", "description": "English, "
+                                + ", ".join(lang["name"] for lang in languages.LANGUAGES.values())
+                                + "."}}, ["language"]),
     },
     "project_profile": {**CONDUCTOR_TOOLS["project_profile"],
                         "inputSchema": _schema({"project": {"type": "string"}}, ["project"])},
@@ -721,6 +791,30 @@ def _reads_mail(agent):
     entry = agentdefs.catalog().get(agent.get("definition") or "") if agent.get("swarm") else None
     return bool(entry) and "mail" in entry["tags"]
 
+def _notebook_of(agent):
+    """A specialist's NotebookLM notebook id, when it has one and NotebookLM is connected."""
+    if not agent.get("swarm") or not agent.get("definition"):
+        return ""
+    import notebooklm
+    import specialists
+    try:
+        meta = specialists.get(agent["definition"])
+    except team.TeamError:
+        return ""
+    return (meta.get("notebook") or {}).get("id", "") if notebooklm.connected() else ""
+
+
+SPECIALIST_TOOLS = {
+    "ask_notebook": {
+        "description": "Ask your NotebookLM notebook (your notes and your field's official "
+                       "sources) a question. Its answer is grounded in those sources and names "
+                       "them: use it to check a fact or find a passage, then answer in your own "
+                       "words. Slower than reading your notes.",
+        "inputSchema": _schema({"question": {"type": "string"}}, ["question"]),
+    },
+}
+
+
 def _builds_agents(agent):
     """Swarm agents tagged `agent-builder` can submit agent drafts for the human to approve."""
     entry = agentdefs.catalog().get(agent.get("definition") or "") if agent.get("swarm") else None
@@ -805,7 +899,8 @@ def available_tools():
     if agent.get("orchestrator"):
         return {**ORCHESTRATOR_TOOLS, **MAIL_TOOLS}
     extra = {**(MAIL_TOOLS if _reads_mail(agent) else {}),
-             **(BUILDER_TOOLS if _builds_agents(agent) else {})}
+             **(BUILDER_TOOLS if _builds_agents(agent) else {}),
+             **(SPECIALIST_TOOLS if _notebook_of(agent) else {})}
     if agent.get("direct"):
         # A run Lago started answers with its last message (lago_hook.on_stop collects it).
         # Given complete_task, cheap models call it anyway and send a summary instead.
@@ -1379,6 +1474,52 @@ def tool_run_agent(agent, task, inputs=None, project="", folder="", mode="cheap"
             "as a message; tell the human when it does.")
 
 
+def tool_specialists():
+    import specialists
+    rows = specialists.all_specialists()
+    if not rows:
+        return ("No specialists yet. The human builds them on the Specialists tab (Agents), or "
+                "you can with create_specialist once they ask for one.")
+    return "\n".join(f"- `{m['id']}` {m['title']} ({' > '.join(m['path'])}): {m['status']}. {m['message']}"
+                     for m in rows)
+
+
+def tool_ask_specialist(specialist, question, files=None, case_study=False):
+    import specialists
+    sid = (specialist or "").strip().strip("`")
+    if isinstance(files, str):
+        files = [files]
+    task_id = specialists.ask(sid, question, from_agent=AGENT_ID, paths=files or [], case=bool(case_study))
+    return f"Asked `{sid}` (task #{task_id}). Its answer arrives here as a message."
+
+
+def tool_create_specialist(role, notes="", depth="focused"):
+    import specialists
+    path = role if isinstance(role, list) else [p.strip() for p in str(role).split(">")]
+    sid = specialists.create(path, notes, depth)
+    return (f"Started `{sid}`: it's mapping the role. When the map is ready the human approves it "
+            "on the Specialists tab (Agents), then it studies and takes its exam; it can be used "
+            "once it passes. Tell them in one line.")
+
+
+def tool_specialist_work(specialist, request, project="", folder=""):
+    import specialists
+    sid = (specialist or "").strip().strip("`")
+    return tool_open_work_session(specialists.lead_request(sid, request), project=project, folder=folder)
+
+
+def tool_ask_notebook(question):
+    import notebooklm
+    agent = config_store.load()["agents"].get(AGENT_ID, {})
+    notebook = _notebook_of(agent)
+    if not notebook:
+        raise team.TeamError("You have no NotebookLM notebook (or it isn't connected).")
+    try:
+        return notebooklm.ask(notebook, question)
+    except notebooklm.NotebookError as error:
+        raise team.TeamError(f"NotebookLM didn't answer: {error}") from error
+
+
 def tool_submit_agent_draft(folder, agent_id, repo, summary, sandbox_report=""):
     import agent_drafts
     draft_id = agent_drafts.submit(folder, agent_id.strip(), repo.strip(), summary, sandbox_report,
@@ -1416,6 +1557,32 @@ def tool_use_agent(agent=""):
     config_store.set_focus(agent)
     return swarm.focus_brief(entry) + ("\n\nIf they haven't said what it should do, ask them in one "
                                  "short line.")
+
+
+def tool_use_persona(persona):
+    wanted = next((pid for pid, p in personas.PERSONAS.items()
+                   if (persona or "").strip().lower() in (pid, p["name"].lower())), None)
+    if wanted is None:
+        raise team.TeamError(f"There's no persona {persona!r}. There are: "
+                             + ", ".join(p["name"] for p in personas.PERSONAS.values()) + ".")
+    config = config_store.without_swarm(config_store.load())
+    if not features.on(config, "personas"):
+        raise team.TeamError("Personas are switched off in the app's Extras: tell them they can "
+                             "switch them on there.")
+    config_store.save(personas.use(config, wanted), source="use_persona")
+    return personas.switch_note(wanted)
+
+
+def tool_speak_language(language):
+    code = languages.find(language)
+    if code is None:
+        raise team.TeamError(f"There's no offline voice for {language!r}. There are: English, "
+                             + ", ".join(lang["name"] for lang in languages.LANGUAGES.values())
+                             + ". Tell them in one short line, in their language.")
+    config = config_store.without_swarm(config_store.load())
+    config["voice"] = {**(config.get("voice") or {}), "language": code}
+    config_store.save(config, source="speak_language")
+    return languages.note(code) + " Say so in one short line, in that language."
 
 
 def tool_message_session(session, text):

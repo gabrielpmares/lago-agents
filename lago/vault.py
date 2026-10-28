@@ -1,4 +1,5 @@
-"""Secrets for agents, kept in your desktop keyring and handed to the agents that need them.
+"""Secrets for agents, kept in your desktop keyring (hosted: an encrypted file) and handed to
+the agents that need them.
 
 A secret has a name, the environment variable agents see it as, and a project (or none, for
 every agent). Its value lives only in the keyring (libsecret on Linux, the Keychain on macOS:
@@ -10,6 +11,8 @@ reach the process without being written to disk; each hand-out is logged.
 Lago and the agents can list secret names, never read values through Lago's tools.
 """
 
+import json
+import os
 import re
 import subprocess
 import sys
@@ -82,13 +85,61 @@ class MacKeychainBackend:
                        capture_output=True, timeout=30)
 
 
+class FileBackend:
+    """An encrypted file in the state folder, for hosted Lago, where there's no keyring. Its key
+    is $LAGO_VAULT_KEY, which the host hands the container when it starts and keeps apart from
+    the customer's volume: a copy of the volume (a backup) doesn't give the values away."""
+
+    def __init__(self, key):
+        import base64
+        import hashlib
+        from cryptography.fernet import Fernet
+        from config_store import STATE_DIR
+        self.fernet = Fernet(base64.urlsafe_b64encode(hashlib.sha256(key.encode()).digest()))
+        self.path = STATE_DIR / "vault.enc"
+
+    def _key(self, name, project):
+        return f"{project or '-'}/{name}"
+
+    def _read(self):
+        from cryptography.fernet import InvalidToken
+        try:
+            return json.loads(self.fernet.decrypt(self.path.read_bytes()))
+        except FileNotFoundError:
+            return {}
+        except InvalidToken as error:
+            raise VaultError("The vault's key doesn't open it") from error
+
+    def _write(self, values):
+        tmp = self.path.with_suffix(".tmp")
+        tmp.touch(mode=0o600)
+        tmp.write_bytes(self.fernet.encrypt(json.dumps(values).encode()))
+        os.replace(tmp, self.path)
+
+    def store(self, name, project, value):
+        values = self._read()
+        values[self._key(name, project)] = value
+        self._write(values)
+
+    def lookup(self, name, project):
+        return self._read().get(self._key(name, project))
+
+    def clear(self, name, project):
+        values = self._read()
+        if values.pop(self._key(name, project), None) is not None:
+            self._write(values)
+
+
 _backend = None
 
 
 def backend():
     global _backend
     if _backend is None:
-        _backend = MacKeychainBackend() if sys.platform == "darwin" else KeyringBackend()
+        if os.environ.get("LAGO_VAULT_KEY"):
+            _backend = FileBackend(os.environ["LAGO_VAULT_KEY"])
+        else:
+            _backend = MacKeychainBackend() if sys.platform == "darwin" else KeyringBackend()
     return _backend
 
 

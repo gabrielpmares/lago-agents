@@ -88,7 +88,7 @@ def fail_over(agent_id):
         if not target:
             team.wait_for_usage(agent_id, config_store.load())
             return
-    if target != account:
+    if target != account and team.has_unfinished_work(agent_id):
         team.stop(agent_id)
         time.sleep(1)
         team.start(agent_id, initial_text=RESUMED_TEXT, keep_session=True)

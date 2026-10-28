@@ -108,6 +108,17 @@ class ResumeAfterResetTests(RunCase):
             team.resume_after_reset()
         team.start.assert_called_once()
 
+    def test_a_running_run_whose_task_is_done_is_left_asleep(self):
+        hub.update_task(self.task, status="done", result="built")
+        self.running.add(RUN)
+        hub.set_state(RUN, status="idle", usage_wait=time.time() - 5, account="gmail")
+        with mock.patch.object(accounts, "active", return_value="main"), \
+                mock.patch.object(accounts, "with_room_now", return_value="main"):
+            team.resume_after_reset()
+        team.start.assert_not_called()
+        team.stop.assert_not_called()
+        self.assertIsNone(hub.get_state(RUN).get("usage_wait"))
+
     def test_still_waiting_does_nothing(self):
         hub.set_state(RUN, status="stopped", usage_wait=time.time() + 3600)
         team.resume_after_reset()

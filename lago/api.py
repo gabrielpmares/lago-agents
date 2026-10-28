@@ -40,6 +40,7 @@ import github
 import goals
 import holds
 import hub
+import languages
 import listen
 import live
 import member_accounts
@@ -47,6 +48,7 @@ import memory
 import mic
 import notifications
 import notify
+import notebooklm
 import onboarding
 import open_tasks
 import outcomes
@@ -69,6 +71,7 @@ import runner
 import server
 import services
 import skill_sources
+import specialists
 import spending
 import statuscards
 import swarm
@@ -125,7 +128,7 @@ def _call(work):
             statuscards.CardError, documents.DocumentError, tickets.TicketError,
             pull_requests.PullRequestError, vault.VaultError, company.AccessError,
             changes.ChangesError, toolrules.RuleError, secret_requests.SecretRequestError,
-            connectors.ConnectorError, backlog.BacklogError) as error:
+            connectors.ConnectorError, backlog.BacklogError, notebooklm.NotebookError) as error:
         raise ApiError(str(error)) from error
     except github.GitHubError as error:
         raise ApiError(f"GitHub: {error}") from error
@@ -271,6 +274,9 @@ def _check_password(password):
     """Your Linux password, checked by sudo (it's never stored or logged). Guards sessions
     that run without permission checks. Asked once: until the app closes it stays unlocked."""
     if config_store.bypass_unlocked():
+        return
+    if config_store.HOSTED:  # signed in at the proxy, and the container is the sandbox
+        config_store.unlock_bypass()
         return
     if not password:
         raise ApiError("Enter your password to skip permissions")
@@ -952,6 +958,80 @@ class Api:
         message = _call(lambda: agent_drafts.decide(draft_id, bool(approve)))
         return {"ok": True, "message": message}
 
+    # ------------------------------------------------------------ specialists
+
+    def specialists(self):
+        """The Specialists tab: yours, the fields to pick a role from, and what's connected."""
+        return {"specialists": [specialists.card(m) for m in specialists.all_specialists()],
+                "fields": specialists.fields(), "depths": list(specialists.DEPTHS),
+                "notebooklm": notebooklm.status(), "perplexity": team.perplexity_ready()}
+
+    def specialist(self, specialist_id):
+        return _call(lambda: specialists.details(specialist_id))
+
+    def specialist_suggest(self, path):
+        try:
+            return {"options": _call(lambda: specialists.suggest(path))}
+        except RuntimeError as error:
+            raise ApiError(f"Couldn't get suggestions: {error}") from error
+
+    def create_specialist(self, path, notes="", depth="focused"):
+        sid = _call(lambda: specialists.create(path, notes or "", depth or "focused"))
+        return {"ok": True, "id": sid, "message": "Mapping the role: it takes a few minutes. You'll "
+                "check the map before anything is studied."}
+
+    def approve_specialist_map(self, specialist_id, keep=None, added=None, notes=""):
+        meta = _call(lambda: specialists.approve_map(specialist_id, keep, added or [], notes or ""))
+        return {"ok": True, "message": f"Studying {len(meta['topics'])} topics. You'll hear when it "
+                "has passed its exam."}
+
+    def retry_specialist(self, specialist_id):
+        _call(lambda: specialists.retry(specialist_id))
+        return {"ok": True, "message": "Picking up where it stopped."}
+
+    def remove_specialist(self, specialist_id):
+        title = _call(lambda: specialists.remove(specialist_id))
+        return {"ok": True, "message": f"Removed {title}."}
+
+    def specialist_note(self, specialist_id, name):
+        return {"text": _call(lambda: specialists.read_note(specialist_id, name))}
+
+    def ask_specialist(self, specialist_id, question, files=None, case=False):
+        task_id = _call(lambda: specialists.ask(specialist_id, question, files=files or [], case=bool(case)))
+        return {"ok": True, "task": task_id}
+
+    def specialist_file(self, specialist_id, path):
+        return {"text": _call(lambda: specialists.read_work_file(specialist_id, path))}
+
+    def specialist_work(self, specialist_id, text, project="", folder="", unrestricted=False, password=""):
+        request = _call(lambda: specialists.lead_request(specialist_id, text))
+        return self.open_workspace(project or "", "", request, unrestricted, password, folder or "")
+
+    def check_specialist_updates(self, specialist_id):
+        _call(lambda: specialists.check_for_updates(specialist_id))
+        return {"ok": True, "message": "Checking what changed in its field."}
+
+    def decide_specialist_refresh(self, specialist_id, approve):
+        _call(lambda: specialists.decide_refresh(specialist_id, bool(approve)))
+        return {"ok": True, "message": "Refreshing: the new notes replace the old ones only if it passes "
+                "its exam on them." if approve else "Declined: its notes stay as they are."}
+
+    def connect_notebooklm(self):
+        return notebooklm.connect()
+
+    def check_notebooklm(self):
+        return notebooklm.check()
+
+    def sync_specialist_notebook(self, specialist_id):
+        notebook = _call(lambda: specialists.sync_notebook(specialist_id))
+        return {"ok": True, "notebook": notebook, "message": f"Its notebook has {notebook['sources']} sources."}
+
+    def specialist_notebook_make(self, specialist_id, kind):
+        notebook = (_call(lambda: specialists.get(specialist_id)).get("notebook") or {}).get("id")
+        if not notebook:
+            raise ApiError("It has no notebook yet: send its notes to NotebookLM first.")
+        return {"ok": True, "message": _call(lambda: notebooklm.generate(notebook, kind))}
+
     def set_swarm_agent(self, agent_id, enabled):
         config = config_store.without_swarm(config_store.load())
         if agent_id not in agentdefs.catalog():
@@ -1376,11 +1456,12 @@ class Api:
                 "mode": config_store.lago_mode(config), "start_card": bool(config.get("start_card")),
                 "user_name": config.get("user_name") or "",
                 "days": [{"day": d["day"], "headlines": d["headlines"]} for d in memory.days(3)],
-                "sessions": sessions, "events": decisions.with_verdicts(hub.events(limit=40)),
+                "sessions": sessions, "events": decisions.with_verdicts(hub.events("cleared = 0", limit=40)),
                 "runs": _agent_runs(states, running, now),
                 "voice": voice.settings(config), "voices": voice.voices(), "voice_setup": voice_setup.status(),
                 "calls": calls.settings(config),
                 "effects": [{"id": k, "label": v} for k, v in voice.EFFECTS.items()],
+                "languages": languages.listing(),
                 "wake_sounds": [{"id": k, "label": v} for k, v in voice.WAKE_SOUNDS.items()
                                 if not k.startswith("/") or Path(k).is_file()],  # the desktop's own sounds vary
                 "chime_categories": [{"id": k, "label": v} for k, v in voice.CATEGORIES.items()],
@@ -1449,9 +1530,11 @@ class Api:
             raise ApiError(f"Unknown persona {persona!r}")
         config = config_store.load()
         chosen = personas.PERSONAS[persona]
-        settings = {**voice.settings(config), "voice": chosen["voice"], "effect": chosen["effect"], "chime": False}
+        settings = {**voice.settings(config), "voice": chosen["voice"], "effect": chosen["effect"], "chime": False,
+                    "persona": persona}
         voice.hush()  # you asked to hear him now: not after what's being said, or the last preview
-        if not voice.say(personas.intro(persona, config.get("user_name") or ""), settings, "progress"):
+        if not voice.say(personas.intro(persona, config.get("user_name") or "", languages.chosen(settings)),
+                         settings, "progress"):
             raise ApiError("Couldn't play his voice: check that the offline voices are installed.")
         return {"ok": True}
 
@@ -1671,6 +1754,28 @@ class Api:
         hub.mark_events_seen()
         return {"ok": True}
 
+    def clear_reports(self, event_ids=None):
+        """Clear Lago's Reports list: the given reports, or all of them."""
+        hub.clear_events(event_ids)
+        return {"ok": True, "message": "Reports cleared." if event_ids is None else "Report cleared."}
+
+    def cancel_all_schedules(self):
+        for row in schedules.active():
+            try:
+                schedules.cancel(row["id"])
+            except schedules.ScheduleError:
+                pass  # it ran or was cancelled meanwhile
+        return {"ok": True, "message": "Reminders cancelled."}
+
+    def close_finished_workspaces(self):
+        """Close every open work session whose whole task is done."""
+        live = _live_all(hub.all_states(), runner.running_agents())
+        done = [ws["id"] for ws in hub.workspaces("status = 'open'")
+                if notifications.session_status(ws, live) == "solved"]
+        for workspace_id in done:
+            _call(lambda: swarm.close_workspace(workspace_id))
+        return {"ok": True, "message": f"Closed {len(done)} finished task{'' if len(done) == 1 else 's'}."}
+
     def save_voice(self, settings):
         if not isinstance(settings, dict):
             raise ApiError("Voice settings must be an object")
@@ -1695,6 +1800,8 @@ class Api:
                            for category, default in voice.DEFAULTS["chimes"].items()}
         if clean["effect"] not in voice.EFFECTS:
             raise ApiError(f"Unknown voice effect {clean['effect']!r}")
+        if clean["language"] != languages.ENGLISH and clean["language"] not in languages.LANGUAGES:
+            raise ApiError(f"Unknown language {clean['language']!r}")
         clean["enabled"], clean["chime"] = bool(clean["enabled"]), bool(clean["chime"])
         clean["wake"], clean["wake_personas"] = bool(clean["wake"]), bool(clean["wake_personas"])
         for key in ("wake_sound", "sent_sound"):
@@ -1708,8 +1815,12 @@ class Api:
                 listen.set_service(clean["wake"])
             except listen.ListenError as error:
                 raise ApiError(str(error)) from error
+        spoke = languages.chosen(config.get("voice"))
         config["voice"] = clean
         config_store.save(config)
+        if clean["language"] != spoke and runner.is_running(config_store.ORCHESTRATOR_ID):
+            notify.tell_orchestrator(f"[Lago] Language: the human changed it in your settings. "
+                                     f"{languages.note(clean['language'])}", start=False)
         return {"ok": True, "message": "Saved."}
 
     def save_calls(self, settings):
@@ -1901,6 +2012,12 @@ class Api:
 
     def dismiss_notification(self, key):
         notifications.dismiss(key)
+        return {"ok": True}
+
+    def dismiss_notifications(self, keys):
+        """The bell's Clear All: dismiss every item it shows."""
+        for key in keys or []:
+            notifications.dismiss(key)
         return {"ok": True}
 
     def notification_opened(self, key):

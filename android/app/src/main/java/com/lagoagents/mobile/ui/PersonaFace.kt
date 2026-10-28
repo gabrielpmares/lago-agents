@@ -47,6 +47,12 @@ private val FACES = mapOf(
     "chip" to Face(R.drawable.persona_chip_face, R.drawable.persona_chip_eyes, 19.4f / 48,
         R.drawable.persona_chip_smile, R.drawable.persona_chip_mouth, 25.1f / 48, bulb = R.drawable.persona_chip_bulb),
     "atlas" to Face(R.drawable.persona_atlas_face, bulb = R.drawable.persona_atlas_bulb, glow = R.drawable.persona_atlas_glow),
+    // Marina, Ada and Iris: the otter, Chip and Atlas in their own colours.
+    "marina" to Face(R.drawable.persona_marina_face, R.drawable.persona_marina_eyes, 22.6f / 48,
+        R.drawable.persona_marina_smile, R.drawable.persona_marina_mouth, 32.4f / 48),
+    "ada" to Face(R.drawable.persona_ada_face, R.drawable.persona_ada_eyes, 19.4f / 48,
+        R.drawable.persona_ada_smile, R.drawable.persona_ada_mouth, 25.1f / 48, bulb = R.drawable.persona_ada_bulb),
+    "iris" to Face(R.drawable.persona_iris_face, bulb = R.drawable.persona_iris_bulb, glow = R.drawable.persona_iris_glow),
 )
 
 /** His face at rest as a picture, for notifications (a caller's photo). */
