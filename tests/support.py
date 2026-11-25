@@ -36,6 +36,10 @@ subprocess.run = _no_systemctl
 
 import desktop  # noqa: E402
 
+# Tests see plain Linux even when they run in WSL (test_desktop.py's WslTests switch it on),
+# so none of them opens Windows' browser or starts a Windows process.
+desktop.IS_WSL = False
+
 # Service definitions a test writes land here, not in ~/.config/systemd or ~/Library/LaunchAgents.
 desktop.SYSTEMD_DIR = TMP / "systemd-user"
 desktop.LAUNCH_DIR = TMP / "launch-agents"

@@ -19,7 +19,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -128,7 +127,8 @@ def _browser_code(client):
         "state": state, "code_challenge": challenge, "code_challenge_method": "S256"})
     print(f"Opening Google sign-in: pick the account to connect. If no browser opens, visit:"
           f"\n{url}")
-    webbrowser.open(url)
+    import desktop
+    desktop.open_url(url)  # on Windows (WSL), Windows' browser
     while "code" not in got and "error" not in got:
         server.handle_request()
     if got.get("state", [""])[0] != state or "code" not in got:

@@ -1,5 +1,5 @@
-"""Lago Agents without GTK (macOS, or `lago-agents --browser`): the same app, served to a
-window on this computer.
+"""Lago Agents without GTK (macOS, Windows through WSL, or `lago-agents --browser`): the same
+app, served to a window on this computer.
 
 A small HTTP server on 127.0.0.1 serves ui/ and answers the page's calls (POST /v1/call), the
 way the GTK window's script handler does. Agents' terminals are real terminals in the page:
@@ -356,12 +356,14 @@ def serve(start_view="", open_window=True):
             _stop(server)
         return server
     threading.Thread(target=server.serve_forever, name="app-server", daemon=True).start()
+    desktop.wsl_keep_alive()  # on Windows: agents keep working once the window closes
+    blocks = False
     try:
-        desktop.app_window(url)  # returns when the window closes (or at once, for a browser tab)
+        blocks = desktop.app_window(url)  # returns when the window closes (or at once, for a browser tab)
     finally:
-        if desktop.WINDOW_BLOCKS:
+        if blocks:
             _stop(server)
-    if not desktop.WINDOW_BLOCKS:  # a browser tab: keep serving until you quit (Ctrl+C)
+    if not blocks:  # a browser tab: keep serving until you quit (Ctrl+C)
         print(f"Lago Agents is open in your browser. Keep this running; Ctrl+C quits.\n{url}", flush=True)
         try:
             while True:

@@ -49,12 +49,16 @@ changes.
 
 ## Requirements
 
-Lago Agents runs on Linux and macOS.
+Lago Agents runs on Linux, macOS and Windows (10 or 11, through WSL 2).
 
 **macOS** 12 or newer, with [Homebrew](https://brew.sh): Python 3.11+, tmux and git
 (`brew install python tmux git`), and the [Claude Code](https://claude.com/claude-code) CLI,
 logged in. Optional: `gh`, Tailscale, Docker, and `ffmpeg` for talking to Lago. See
 [On a Mac](#on-a-mac) below.
+
+**Windows** 10 (21H2 or newer) or 11, with [WSL 2](https://learn.microsoft.com/windows/wsl/install)
+and a Linux distribution in it (Ubuntu or Debian): agents, tmux and Claude Code run there, and
+the app opens in an Edge (or Chrome) window on Windows. See [On Windows](#on-windows) below.
 
 **Linux:** any desktop with GTK 3 and WebKit2GTK 4.1 (GNOME, KDE Plasma, Xfce, Cinnamon...,
 on Wayland or X11), plus:
@@ -124,6 +128,48 @@ What's different on a Mac:
 | Talking to Lago | `brew install ffmpeg`, plus the speech venv below; macOS asks once for the microphone (say no and Lago still speaks and you type; the mic button says how to allow it later) |
 | Terminal windows | iTerm if it's installed, else Terminal |
 | Agents built from GitHub | Their install scripts run in macOS's own sandbox (`sandbox-exec`) instead of bubblewrap: their folder only, nothing private |
+
+### On Windows
+
+Lago Agents runs inside WSL, the Linux that comes with Windows: tmux, which keeps every agent's
+session running, has no Windows version. In PowerShell:
+
+```powershell
+wsl --install -d Ubuntu               # once; restart Windows if it asks, then open Ubuntu
+```
+
+Then, in Ubuntu (the Start menu has it), with the clone **inside** WSL (`~/lago-agents`, not
+under `/mnt/c`, which WSL reads slowly):
+
+```bash
+sudo apt install python3 tmux git gh openssh-client
+curl -fsSL https://claude.ai/install.sh | bash      # Claude Code, then run `claude` once to log in
+git clone https://github.com/gabrielpmares/lago-agents ~/lago-agents
+cd ~/lago-agents && ./install.sh
+```
+
+`install.sh` puts **Lago Agents** in the Windows Start menu. It opens in an Edge app window
+(Chrome or Brave when there's no Edge), served from WSL on this computer only, with each agent's
+terminal live in the page, as on a Mac. `./lago-agents` from the Ubuntu terminal opens it too.
+Claude Code, `git` and `gh` must be WSL's own: Windows' copies (on WSL's PATH under `/mnt/c`)
+can't run agents there, and `install.sh` says so when it finds one.
+
+What's different on Windows:
+
+| | Windows (WSL) |
+|---|---|
+| The window | Windows' Edge (else Chrome or Brave) as an app window, with a profile of its own in `%LOCALAPPDATA%\lago-agents\window`. `./lago-agents --gtk` opens the Linux window instead, through WSLg, with GTK installed as on Linux |
+| Agents after you close the window | They keep working: Lago keeps the WSL distribution running (a hidden `wsl.exe`) while its tmux sessions are open. `tmux -L lago-agents kill-server` stops them all |
+| Secrets | Encrypted with Windows' DPAPI for your Windows account (what Credential Manager uses), in `~/.local/state/lago-agents/vault-windows.json`; a Linux keyring in WSL is used instead if one answers |
+| Links and files | Open on Windows, in your default browser and apps (`wslview` if you have it, else Explorer) |
+| Terminal windows | Windows Terminal, else a console window |
+| Light or dark | Windows' app mode |
+| Background scheduler, phone access, "Hey Lago" | systemd user services, once systemd is on in WSL (`[boot]` `systemd=true` in `/etc/wsl.conf`, then `wsl --shutdown`). Without it they run while the app is open |
+| Voice | WSLg's audio: `sudo apt install pulseaudio-utils ffmpeg`, then **Install voices** as on Linux |
+| Agents built from GitHub | bubblewrap, as on Linux (`sudo apt install bubblewrap`) |
+
+Windows reaches the app on `127.0.0.1`, through WSL's localhost forwarding (on by default; in
+`.wslconfig`, `localhostForwarding=true`, or `networkingMode=mirrored`).
 
 For the voice (optional), install a recorder and player (PipeWire's `pw-record`/`pw-play`,
 or PulseAudio's `parecord`/`paplay`, or ALSA's `arecord`), `ffmpeg` and, as a fallback

@@ -26,7 +26,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -303,7 +302,8 @@ def _sign_in_oauth(conf, own_client=None, params=None):
             params["scope"] = " ".join(found["scopes"])
         params.update(extra)
         joiner = "&" if "?" in found["authorization_endpoint"] else "?"
-        webbrowser.open(found["authorization_endpoint"] + joiner + urllib.parse.urlencode(params))
+        import desktop
+        desktop.open_url(found["authorization_endpoint"] + joiner + urllib.parse.urlencode(params))
         deadline = time.time() + SIGN_IN_SECONDS
         while "code" not in got and "error" not in got and time.time() < deadline:
             server.handle_request()

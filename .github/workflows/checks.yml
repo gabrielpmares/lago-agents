@@ -106,3 +106,63 @@ jobs:
       - name: The app without GTK, with an agent's terminal in the page
         if: success() || failure()
         run: python tests/e2e_app_window.py chromium shots
+
+  windows:
+    name: Windows (WSL)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: wsl-bash {0}
+    steps:
+      - name: Keep Linux line endings (the scripts run in WSL)
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          additional-packages: python3 tmux git curl
+      - name: Tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Lago finds Windows from WSL, and Windows' DPAPI keeps a secret
+        if: success() || failure()
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "lago")
+          import desktop, vault
+          assert desktop.IS_WSL, "not detected as WSL"
+          print("PowerShell:", desktop.windows_program("powershell.exe"))
+          print("LOCALAPPDATA:", desktop.windows_env("LOCALAPPDATA"))
+          print("App window browser:", desktop._app_browser())
+          print("Light or dark:", desktop.color_scheme())
+          assert desktop.windows_env("LOCALAPPDATA"), "Windows' environment isn't readable"
+          windows = vault.WindowsBackend()
+          windows.store("ci-check", "ci", 'a "quoted" \'value\' with ünïcode')
+          assert windows.lookup("ci-check", "ci") == 'a "quoted" \'value\' with ünïcode', windows.lookup("ci-check", "ci")
+          windows.clear("ci-check", "ci")
+          assert windows.lookup("ci-check", "ci") is None
+          print("DPAPI: stored, read back and removed")
+          PY
+      - name: The installer makes the Start menu shortcut
+        if: success() || failure()
+        run: |
+          mkdir -p "$HOME/bin"
+          printf '#!/bin/sh\necho "claude (stand-in for the installer check)"\n' > "$HOME/bin/claude"
+          chmod +x "$HOME/bin/claude"
+          PATH="$HOME/bin:$PATH" ./install.sh
+          test -x "$HOME/.local/state/lago-agents/windows-launch.sh"
+          appdata="$(cd / && cmd.exe /d /c 'echo %APPDATA%' | tr -d '\r' | tail -1)"
+          test -f "$(wslpath -u "$appdata\\Microsoft\\Windows\\Start Menu\\Programs")/Lago Agents.lnk"
+      - name: The app starts and serves its page
+        if: success() || failure()
+        run: |
+          python3 lago/app_server.py --no-window > /tmp/url.txt 2> /tmp/server.log &
+          for i in $(seq 1 60); do [ -s /tmp/url.txt ] && break; sleep 1; done
+          URL=$(head -1 /tmp/url.txt)
+          if [ -z "$URL" ]; then echo "The server didn't start:"; cat /tmp/server.log; exit 1; fi
+          curl -sf -c /tmp/jar -b /tmp/jar -L "$URL" | grep -q "web-bridge.js"
+          curl -sf -b /tmp/jar -X POST -H "X-Lago-Web: 1" -H "Content-Type: application/json" \
+            -d '{"method":"init","params":{}}' "${URL%%/\?*}/v1/call" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['ok'] and d['data']['page_terminal'], d; print('init answered')"
+          kill %1

@@ -2,8 +2,8 @@
 the agents that need them.
 
 A secret has a name, the environment variable agents see it as, and a project (or none, for
-every agent). Its value lives only in the keyring (libsecret on Linux, the Keychain on macOS:
-encrypted at rest and unlocked when you log in); Lago Agents keeps the name, variable, project and an access log in hub.db,
+every agent). Its value lives only in the keyring (libsecret on Linux, the Keychain on macOS,
+Windows' DPAPI on Windows through WSL: encrypted at rest and unlocked when you log in); Lago Agents keeps the name, variable, project and an access log in hub.db,
 never the value, and nothing shows a value again once it's saved. When an agent of that
 project starts, its launch script asks `vault.py --env <agent>` for its variables, so they
 reach the process without being written to disk; each hand-out is logged.
@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import activity
 import hub
@@ -85,6 +86,92 @@ class MacKeychainBackend:
                        capture_output=True, timeout=30)
 
 
+class WindowsBackend:
+    """On Windows (Lago in WSL), where there's rarely a Secret Service: each value encrypted
+    with Windows' DPAPI for your Windows account (the protection Windows' Credential Manager
+    uses), through PowerShell, and kept in a file of yours. Only your Windows login can read
+    it back. Values travel on stdin, base64-encoded, never on a command line."""
+
+    def __init__(self, powershell=None, path=None):
+        import desktop
+        from config_store import STATE_DIR
+        self.powershell = powershell or desktop.windows_program("powershell.exe")
+        self.cwd = str(desktop.windows_drive() or Path.home())
+        self.path = Path(path or STATE_DIR / "vault-windows.json")
+
+    def _key(self, name, project):
+        return f"{project or '-'}/{name}"
+
+    def _run(self, script):
+        if not self.powershell:
+            raise VaultError("Windows' PowerShell isn't reachable from WSL (is interop on?)")
+        try:
+            proc = subprocess.run([self.powershell, "-NoProfile", "-NonInteractive", "-Command", "-"],
+                                  input=script, capture_output=True, text=True, timeout=60, cwd=self.cwd)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise VaultError(f"Windows didn't answer: {error}") from error
+        if proc.returncode != 0:
+            raise VaultError("Windows didn't keep it: " + (proc.stderr or proc.stdout).strip()[:200])
+        return proc.stdout.strip()
+
+    def _read(self):
+        try:
+            return json.loads(self.path.read_text())
+        except FileNotFoundError:
+            return {}
+        except ValueError as error:
+            raise VaultError(f"{self.path} isn't readable") from error
+
+    def _write(self, values):
+        tmp = self.path.with_suffix(".tmp")
+        tmp.touch(mode=0o600)
+        tmp.write_text(json.dumps(values, indent=1))
+        os.replace(tmp, self.path)
+
+    def store(self, name, project, value):
+        import base64
+        plain = base64.b64encode(value.encode()).decode()
+        blob = self._run(
+            "Add-Type -AssemblyName System.Security\n"
+            f"$b = [Convert]::FromBase64String('{plain}')\n"
+            "$e = [Security.Cryptography.ProtectedData]::Protect($b, $null, 'CurrentUser')\n"
+            "[Convert]::ToBase64String($e)\n")
+        if not blob:
+            raise VaultError("Windows didn't encrypt it")
+        values = self._read()
+        values[self._key(name, project)] = blob
+        self._write(values)
+
+    def lookup(self, name, project):
+        import base64
+        blob = self._read().get(self._key(name, project))
+        if not blob:
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9+/=]+", blob):
+            raise VaultError(f"{self.path} holds something that isn't Windows' encryption")
+        plain = self._run(
+            "Add-Type -AssemblyName System.Security\n"
+            f"$e = [Convert]::FromBase64String('{blob}')\n"
+            "$b = [Security.Cryptography.ProtectedData]::Unprotect($e, $null, 'CurrentUser')\n"
+            "[Convert]::ToBase64String($b)\n")
+        return base64.b64decode(plain).decode()
+
+    def clear(self, name, project):
+        values = self._read()
+        if values.pop(self._key(name, project), None) is not None:
+            self._write(values)
+
+
+def _keyring_usable():
+    """A Secret Service answers (in WSL there's usually none)."""
+    try:
+        backend = KeyringBackend()
+        backend.lookup("lago-agents-probe", "")
+        return True
+    except Exception:  # no bindings, no D-Bus session, no keyring daemon
+        return False
+
+
 class FileBackend:
     """An encrypted file in the state folder, for hosted Lago, where there's no keyring. Its key
     is $LAGO_VAULT_KEY, which the host hands the container when it starts and keeps apart from
@@ -139,7 +226,13 @@ def backend():
         if os.environ.get("LAGO_VAULT_KEY"):
             _backend = FileBackend(os.environ["LAGO_VAULT_KEY"])
         else:
-            _backend = MacKeychainBackend() if sys.platform == "darwin" else KeyringBackend()
+            import desktop
+            if sys.platform == "darwin":
+                _backend = MacKeychainBackend()
+            elif desktop.IS_WSL and not _keyring_usable():
+                _backend = WindowsBackend()
+            else:
+                _backend = KeyringBackend()
     return _backend
 
 

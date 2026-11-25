@@ -7,7 +7,8 @@ The page talks to Python through a `lago` script message handler (see ui/app.js)
 
     lago_agents.py                  open on the Overview
     lago_agents.py agent/<id>       open on a page (any #hash of the UI)
-    lago_agents.py --browser        without GTK, in a browser window (always, on macOS)
+    lago_agents.py --browser        without GTK, in a browser window (always, on macOS; on
+                                    Windows (WSL) too, in Edge, unless you ask for --gtk)
 
 Set LAGO_DEBUG=1 to enable the web inspector and print the page's console to stdout.
 With LAGO_DEBUG=1, LAGO_SNAPSHOT=<file.png> saves a picture of the page after 5 seconds
@@ -18,7 +19,6 @@ import json
 import os
 import re
 import signal
-import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -35,8 +35,17 @@ def _gtk_available():
         return False
 
 
-# Without GTK (macOS, or `lago-agents --browser`): the same app, served to a window (app_server.py).
-if __name__ == "__main__" and (sys.platform == "darwin" or "--browser" in sys.argv or not _gtk_available()):
+def _in_wsl():
+    try:
+        return bool(os.environ.get("WSL_DISTRO_NAME")) or "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
+    except OSError:
+        return False
+
+
+# Without GTK (macOS, Windows through WSL, or `lago-agents --browser`): the same app, served to
+# a window (app_server.py). In WSL a GTK window works too (WSLg), with --gtk.
+if __name__ == "__main__" and (sys.platform == "darwin" or "--browser" in sys.argv or not _gtk_available()
+                               or (_in_wsl() and "--gtk" not in sys.argv)):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import app_server
     views = [a for a in sys.argv[1:] if not a.startswith("--")]
@@ -229,12 +238,8 @@ class LagoAgentsWindow(Gtk.Window):
             if not path.exists():
                 return False
             target = str(path)
-        try:
-            subprocess.Popen(["xdg-open", target], start_new_session=True,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError:
-            return False
-        return True
+        import desktop
+        return desktop.open_target(target)
 
     def on_key(self, _window, event):
         """Ctrl+Space talks to the Orchestrator, even while the terminal has focus."""

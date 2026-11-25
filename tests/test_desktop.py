@@ -1,10 +1,13 @@
-"""What differs between Linux and macOS (desktop.py, vault.py's Keychain): checked here with
-macOS's branch switched on, and for real on a Mac by CI."""
+"""What differs between Linux, macOS and Windows through WSL (desktop.py, vault.py's Keychain
+and DPAPI): checked here with macOS's or WSL's branch switched on, and for real on a Mac and in
+WSL on Windows by CI."""
 
 import os
 import plistlib
+import re
 import subprocess
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import support
@@ -83,6 +86,114 @@ class MacTests(unittest.TestCase):
                 mock.patch.object(desktop.subprocess, "run", lambda args, **k: subprocess.CompletedProcess(args, 0, "/usr/local/bin/claude\n", "")):
             self.assertEqual(desktop.process_name(123), "claude")
         self.assertAlmostEqual(desktop._etime_start("01-02:03:04"), __import__("time").time() - (86400 + 7384), delta=5)
+
+
+class WslTests(unittest.TestCase):
+    """Lago in WSL on Windows: Windows' own programs open its window, links, terminals and
+    keep its secrets. Here they're stand-ins that record how they were called."""
+
+    def setUp(self):
+        support.reset()
+        for name, value in (("IS_WSL", True), ("IS_MAC", False)):
+            patch = mock.patch.object(desktop, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.drive = support.TMP / "c-drive"
+        self.drive.mkdir(exist_ok=True)
+        for patch in (mock.patch.object(desktop, "windows_drive", lambda: self.drive),
+                      mock.patch.object(desktop, "windows_program", lambda name: f"/mnt/c/Windows/System32/{name}"),
+                      mock.patch.dict(os.environ, {"WSL_DISTRO_NAME": "Ubuntu"})):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_a_terminal_window_is_windows_terminal_running_a_script_in_this_distribution(self):
+        with mock.patch.object(desktop.shutil, "which", lambda name: None):
+            argv = desktop.terminal_argv('tmux -L lago-agents attach -t "=la-x"; echo done')
+        self.assertEqual(argv[:3], ["/mnt/c/Windows/System32/wt.exe", "-w", "new"])
+        self.assertEqual(argv[3:8], ["/mnt/c/Windows/System32/wsl.exe", "-d", "Ubuntu", "-e", "sh"])
+        script = Path(argv[8])
+        self.addCleanup(script.unlink, missing_ok=True)
+        self.assertNotIn(";", " ".join(argv))  # Windows Terminal would start another tab at a ";"
+        self.assertIn('tmux -L lago-agents attach -t "=la-x"; echo done', script.read_text())
+        self.assertTrue(script.read_text().startswith('rm -f "$0"'))
+
+    def test_the_light_or_dark_preference_is_windows_app_mode(self):
+        answers = {"0x0": "dark", "0x1": "light"}
+        for value, scheme in answers.items():
+            out = f"HKEY_CURRENT_USER\\...\\Personalize\r\n    AppsUseLightTheme    REG_DWORD    {value}\r\n"
+            with mock.patch.object(desktop.subprocess, "run", lambda args, **k: subprocess.CompletedProcess(args, 0, out, "")):
+                self.assertEqual(desktop.color_scheme(), scheme)
+
+    def test_files_open_on_windows_by_their_windows_path_and_links_as_they_are(self):
+        started = []
+        wslpath = lambda args, **k: subprocess.CompletedProcess(args, 0, "\\\\wsl.localhost\\Ubuntu\\home\\me\\a.pdf\n", "")  # noqa: E731
+        with mock.patch.object(desktop.subprocess, "run", wslpath), \
+                mock.patch.object(desktop.subprocess, "Popen", lambda argv, **k: started.append(argv)), \
+                mock.patch.object(desktop.shutil, "which", lambda name: None):
+            self.assertTrue(desktop.open_target("/home/me/a.pdf"))
+            self.assertTrue(desktop.open_url("https://example.com/?a=1&b=2"))
+        self.assertEqual(started, [["/mnt/c/Windows/System32/explorer.exe", "\\\\wsl.localhost\\Ubuntu\\home\\me\\a.pdf"],
+                                   ["/mnt/c/Windows/System32/explorer.exe", "https://example.com/?a=1&b=2"]])
+
+    def test_the_window_is_an_edge_app_window_with_a_windows_profile(self):
+        edge = self.drive / "Program Files (x86)" / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+        edge.parent.mkdir(parents=True, exist_ok=True)
+        edge.touch()
+        runs = []
+
+        def run(args, **kwargs):
+            runs.append(args)
+            if Path(str(args[0])).name == "cmd.exe":
+                return subprocess.CompletedProcess(args, 0, "C:\\Users\\me\\AppData\\Local\r\n", "")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        with mock.patch.object(desktop.subprocess, "run", run):
+            self.assertTrue(desktop.app_window("http://127.0.0.1:5000/?t=x"))
+        window = runs[-1]
+        self.assertEqual(window[:2], [str(edge), "--app=http://127.0.0.1:5000/?t=x"])
+        self.assertIn("--user-data-dir=C:\\Users\\me\\AppData\\Local\\lago-agents\\window", window)
+
+    def test_the_distribution_stays_up_while_agents_run_through_a_hidden_windows_process(self):
+        started = []
+        with mock.patch.object(desktop.shutil, "which", lambda name: "/usr/bin/flock" if name == "flock" else None), \
+                mock.patch.object(desktop.subprocess, "Popen", lambda argv, **k: started.append(argv)):
+            self.assertTrue(desktop.wsl_keep_alive())
+        (argv,) = started
+        self.assertEqual(argv[0], "/mnt/c/Windows/System32/powershell.exe")
+        script = argv[-1]
+        self.assertIn("Start-Process -WindowStyle Hidden -FilePath '/mnt/c/Windows/System32/wsl.exe'", script)
+        self.assertIn("-d Ubuntu -e flock -n ", script)
+        self.assertIn("tmux -L lago-agents has-session", script)
+        with mock.patch.object(desktop, "IS_WSL", False):
+            self.assertFalse(desktop.wsl_keep_alive())
+
+    def test_secrets_are_encrypted_by_windows_and_travel_on_stdin(self):
+        import base64
+        runs = []
+
+        def powershell(args, input=None, **kwargs):
+            runs.append((args, input))
+            given = re.search(r"FromBase64String\('([^']*)'\)", input).group(1)
+            raw = base64.b64decode(given)
+            # A stand-in for DPAPI: reversible, and never the value itself.
+            changed = bytes(b ^ 0x5A for b in raw)
+            return subprocess.CompletedProcess(args, 0, base64.b64encode(changed).decode() + "\r\n", "")
+        backend = vault.WindowsBackend(powershell="/mnt/c/powershell.exe", path=support.TMP / "vault-windows.json")
+        with mock.patch.object(vault.subprocess, "run", powershell):
+            backend.store("stripe", "shop", "sk_live_'quoted\"value")
+            self.assertEqual(backend.lookup("stripe", "shop"), "sk_live_'quoted\"value")
+            self.assertIsNone(backend.lookup("other", "shop"))
+            backend.clear("stripe", "shop")
+            self.assertIsNone(backend.lookup("stripe", "shop"))
+        self.assertTrue(runs)
+        for args, script in runs:
+            self.assertEqual(args, ["/mnt/c/powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "-"])
+            self.assertNotIn("sk_live", script)
+        self.assertIn("Protect(", runs[0][1])
+
+    def test_wsl_without_a_keyring_keeps_secrets_with_windows(self):
+        with mock.patch.object(vault, "_backend", None), mock.patch.object(vault, "_keyring_usable", lambda: False), \
+                mock.patch.dict(os.environ, {"LAGO_VAULT_KEY": ""}):
+            self.assertIsInstance(vault.backend(), vault.WindowsBackend)
 
 
 class CertificateTests(unittest.TestCase):

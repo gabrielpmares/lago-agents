@@ -1,5 +1,5 @@
-"""The parts of the computer that differ from one system to the next (Linux distributions, and
-macOS), found rather than assumed: the app's window, opening a file or link, a terminal to open
+"""The parts of the computer that differ from one system to the next (Linux distributions,
+macOS, and Windows through WSL), found rather than assumed: the app's window, opening a file or link, a terminal to open
 a window in, the light or dark preference, a program that records the microphone, one that
 plays a sound, a sandbox for setup scripts you didn't write, what a process is, the keyring
 and background services.
@@ -16,6 +16,23 @@ import webbrowser
 from pathlib import Path
 
 IS_MAC = sys.platform == "darwin"
+
+
+def _is_wsl():
+    """Linux running in the Windows Subsystem for Linux (WSL 2 or 1)."""
+    if sys.platform != "linux":
+        return False
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
+    except OSError:
+        return False
+
+
+# On Windows, Lago runs inside WSL: agents, tmux and the app are Linux; its window, the
+# links and files it opens, terminal windows and secrets are Windows' (see WINDOWS below).
+IS_WSL = _is_wsl()
 
 # Terminals and how each runs a command line in a new window, most specific first.
 # x-terminal-emulator is Debian and Ubuntu's choice of default.
@@ -44,6 +61,8 @@ def terminal_argv(command):
         else:
             script = f'tell application "Terminal" to do script "{quoted}"\ntell application "Terminal" to activate'
         return ["osascript", "-e", script]
+    if IS_WSL:
+        return _windows_terminal_argv(command)
     preferred = os.path.basename(os.environ.get("TERMINAL", ""))
     for name, args in sorted(TERMINALS, key=lambda t: t[0] != preferred):
         path = shutil.which(name)
@@ -61,6 +80,8 @@ def color_scheme():
         except (OSError, subprocess.TimeoutExpired):
             return None
         return "dark" if "Dark" in out else "light"
+    if IS_WSL:
+        return _windows_color_scheme()
     try:
         out = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Desktop",
                               "--object-path", "/org/freedesktop/portal/desktop", "--method",
@@ -184,6 +205,8 @@ def _seatbelt_argv(argv, folder, env=None):
 
 def open_target(target):
     """Open a URL in the browser, or a file or folder in its usual app. True if it started."""
+    if IS_WSL:
+        return _windows_open(str(target))
     command = ["open", str(target)] if IS_MAC else ["xdg-open", str(target)]
     try:
         subprocess.Popen(command, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -202,7 +225,16 @@ APP_BROWSERS = (
 )
 
 
+def open_url(url):
+    """Open a web page in your browser (on Windows, Windows' default browser)."""
+    if IS_WSL and _windows_open(url):
+        return True
+    return webbrowser.open(url)
+
+
 def _app_browser():
+    if IS_WSL:
+        return _windows_app_browser()
     for name, mac_path in APP_BROWSERS:
         if IS_MAC and mac_path and Path(mac_path).exists():
             return mac_path
@@ -214,35 +246,56 @@ def _app_browser():
 def app_window(url, profile_dir=None):
     """Show the app at `url` in a window of its own, and return once it closes: a native
     window when pywebview is installed (macOS's WebKit), else an app window of Chrome, Chromium,
-    Edge or Brave with its own profile. Without either, the default browser opens it and this
-    returns at once: False."""
-    try:
-        import webview  # pywebview: pip install pywebview
-    except ImportError:
-        webview = None
+    Edge or Brave with its own profile (on Windows, Windows' own Edge or Chrome). Without
+    either, the default browser opens it and this returns at once: False."""
+    webview = None
+    if not IS_WSL:
+        try:
+            import webview  # pywebview: pip install pywebview
+        except ImportError:
+            webview = None
     if webview is not None:
         webview.create_window("Lago Agents", url, width=1440, height=880, min_size=(900, 600))
         webview.start(private_mode=False)
         return True
     browser = _app_browser()
-    if browser:
-        profile = Path(profile_dir or Path.home() / ".local" / "state" / "lago-agents" / "window")
-        profile.mkdir(parents=True, exist_ok=True)
-        subprocess.run([browser, f"--app={url}", f"--user-data-dir={profile}", "--no-first-run",
-                        "--no-default-browser-check", "--window-size=1440,880"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    webbrowser.open(url)
+    profile = _window_profile(profile_dir)
+    if browser and profile:
+        try:
+            subprocess.run([browser, f"--app={url}", f"--user-data-dir={profile}", "--no-first-run",
+                            "--no-default-browser-check", "--window-size=1440,880"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except OSError:
+            pass
+    open_url(url)
     return False
+
+
+def _window_profile(profile_dir=None):
+    """The browser profile the app's window keeps (sign-ins, zoom), apart from yours. On Windows
+    it's a Windows folder (%LOCALAPPDATA%\\lago-agents\\window): Edge and Chrome can't keep a
+    profile in WSL's files."""
+    if IS_WSL and not profile_dir:
+        local = windows_env("LOCALAPPDATA")
+        return local + "\\lago-agents\\window" if local else None
+    profile = Path(profile_dir or Path.home() / ".local" / "state" / "lago-agents" / "window")
+    profile.mkdir(parents=True, exist_ok=True)
+    return str(profile)
 
 
 def open_app_window(url):
     """Bring up another window on an app that's already running (a second launch)."""
     browser = _app_browser()
-    if browser and not _has_pywebview():
-        subprocess.Popen([browser, f"--app={url}"], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
-        webbrowser.open(url)
+    if browser and (IS_WSL or not _has_pywebview()):
+        profile = _window_profile()
+        argv = [browser, f"--app={url}"] + ([f"--user-data-dir={profile}"] if IS_WSL and profile else [])
+        try:
+            subprocess.Popen(argv, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except OSError:
+            pass
+    open_url(url)
 
 
 def _has_pywebview():
@@ -492,3 +545,168 @@ def tailscale_cli():
         return found
     app = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
     return str(app) if app.exists() else "tailscale"
+
+
+# ---------------------------------------------------------------- Windows, through WSL
+#
+# Lago runs in a WSL distribution (Ubuntu, Debian...), where tmux, Claude Code and the agents
+# are; Windows' own programs are reachable from there (WSL interop): explorer.exe opens
+# links and files, Edge or Chrome is the app's window (WSL forwards localhost to Windows),
+# Windows Terminal opens terminal windows, and DPAPI (through PowerShell) keeps secrets.
+
+WINDOWS_BROWSERS = (
+    r"Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"Program Files\Microsoft\Edge\Application\msedge.exe",
+    r"Program Files\Google\Chrome\Application\chrome.exe",
+    r"Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    r"Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+)
+
+
+def windows_drive():
+    """Where WSL mounts Windows' C: drive (/mnt/c unless wsl.conf moved it), or None."""
+    try:
+        out = subprocess.run(["wslpath", "-u", "C:\\"], capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        out = ""
+    for candidate in (out, "/mnt/c"):
+        if candidate and Path(candidate).is_dir():
+            return Path(candidate)
+    return None
+
+
+def windows_program(name):
+    """A Windows program by name ("powershell.exe"): on the PATH (WSL appends Windows' own), else
+    in its usual folder. None without one."""
+    found = shutil.which(name)
+    if found:
+        return found
+    drive = windows_drive()
+    if drive is None:
+        return None
+    for folder in (r"Windows\System32", r"Windows", r"Windows\System32\WindowsPowerShell\v1.0", r"Program Files\WSL"):
+        path = drive.joinpath(*folder.split("\\"), name)
+        if path.exists():
+            return str(path)
+    return None
+
+
+def windows_env(name):
+    """A Windows environment variable ("LOCALAPPDATA"), or "" when Windows can't be asked."""
+    cmd = windows_program("cmd.exe")
+    if not cmd:
+        return ""
+    drive = windows_drive()
+    try:
+        # From a Windows folder: cmd.exe warns about (and won't start in) a WSL one.
+        out = subprocess.run([cmd, "/d", "/c", f"echo %{name}%"], capture_output=True, text=True, timeout=10,
+                             cwd=str(drive) if drive else None).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return "" if not out or out == f"%{name}%" else out.splitlines()[-1].strip()
+
+
+def windows_path(path):
+    """A WSL path as Windows sees it (\\\\wsl.localhost\\Ubuntu\\home\\... or C:\\...), or None."""
+    try:
+        proc = subprocess.run(["wslpath", "-w", str(path)], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else None
+
+
+def _windows_open(target):
+    """Open a link in Windows' default browser, or a file or folder in its Windows app.
+    wslview (wslu) when it's installed, else explorer.exe."""
+    if not re.match(r"[a-z][a-z0-9+.-]*:", target, re.I) or target.startswith("file:"):
+        path = target[len("file://"):] if target.startswith("file://") else target
+        target = windows_path(Path(path).expanduser()) or target
+    wslview = shutil.which("wslview")
+    command = [wslview, target] if wslview else [windows_program("explorer.exe") or "explorer.exe", target]
+    try:
+        subprocess.Popen(command, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         cwd=str(windows_drive() or Path.home()))
+        return True
+    except OSError:
+        return False
+
+
+def _windows_app_browser():
+    """Windows' Edge (always there on Windows 10 and 11), else Chrome or Brave."""
+    drive = windows_drive()
+    if drive is None:
+        return None
+    for relative in WINDOWS_BROWSERS:
+        path = drive.joinpath(*relative.split("\\"))
+        if path.exists():
+            return str(path)
+    return None
+
+
+def _windows_color_scheme():
+    """Windows' app mode (Settings, Personalization, Colors)."""
+    reg = windows_program("reg.exe")
+    if not reg:
+        return None
+    try:
+        out = subprocess.run([reg, "query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+                              "/v", "AppsUseLightTheme"], capture_output=True, text=True, timeout=5,
+                             cwd=str(windows_drive() or Path.home())).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = re.search(r"AppsUseLightTheme\s+REG_DWORD\s+0x([0-9a-f]+)", out, re.I)
+    if not match:
+        return None
+    return "light" if int(match.group(1), 16) else "dark"
+
+
+def _windows_terminal_argv(command):
+    """A new Windows Terminal window (else a console window) running `command` in this WSL
+    distribution. The command travels in a script file, not through Windows' quoting rules
+    (or Windows Terminal's, where ";" starts another tab); the script removes itself."""
+    import tempfile
+    wsl = windows_program("wsl.exe")
+    if not wsl:
+        return None
+    fd, script = tempfile.mkstemp(prefix="lago-terminal-", suffix=".sh")
+    with os.fdopen(fd, "w") as handle:
+        handle.write(f'rm -f "$0"\ncd\n{command}\n')
+    distro = os.environ.get("WSL_DISTRO_NAME")
+    inner = [wsl, *(["-d", distro] if distro else []), "-e", "sh", script]
+    wt = windows_program("wt.exe")
+    if wt:
+        return [wt, "-w", "new", *inner]
+    conhost = windows_program("conhost.exe")
+    return [conhost, *inner] if conhost else None
+
+
+def wsl_keep_alive(socket="lago-agents"):
+    """Keep this WSL distribution running while the app is open or agents are at work.
+    WSL stops a distribution soon after the last Windows program using it ends, which
+    would stop every agent with it once the window closes. A hidden Windows process waits
+    in the distribution instead, as long as Lago's tmux server has sessions, so agents
+    keep working as they do on Linux and macOS. One at a time (flock). False when it can't."""
+    if not IS_WSL:
+        return False
+    powershell, wsl = windows_program("powershell.exe"), windows_program("wsl.exe")
+    if not powershell or not wsl or not shutil.which("flock"):
+        return False
+    import config_store
+    lock = config_store.STATE_DIR / "wsl-keep-alive.lock"
+    app = config_store.STATE_DIR / "app-server.json"
+    # Waits while the app is open (its state file) or tmux has sessions; checks once a minute.
+    loop = (f"sleep 60; while [ -e '{app}' ] || tmux -L {socket} has-session 2>/dev/null; "
+            f"do sleep 60; done")
+    distro = os.environ.get("WSL_DISTRO_NAME", "")
+    arguments = ([f"-d {distro}"] if distro else []) + [f"-e flock -n {lock} sh -c \"{loop}\""]
+    # Start-Process: a Windows process of its own, hidden, that outlives this one.
+    ps_quote = lambda text: "'" + text.replace("'", "''") + "'"  # noqa: E731
+    script = (f"Start-Process -WindowStyle Hidden -FilePath {ps_quote(wsl)} "
+              f"-ArgumentList {ps_quote(' '.join(arguments))}")
+    try:
+        subprocess.Popen([powershell, "-NoProfile", "-NonInteractive", "-Command", script],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                         cwd=str(windows_drive() or Path.home()))
+        return True
+    except OSError:
+        return False

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Installs Lago Agents: on Linux, in the app menu; on macOS, as an app in ~/Applications.
+# Installs Lago Agents: on Linux, in the app menu; on macOS, as an app in ~/Applications; on
+# Windows, inside WSL (run this there), in the Start menu.
 #   ./install.sh              install
 #   ./install.sh --uninstall  remove it from the app menu (agents and history are kept)
 set -euo pipefail
@@ -13,6 +14,19 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lago-agents"
 MENU_FILE="$HOME/.local/share/applications/lago-agents.desktop"
 ICON_FILE="$HOME/.local/share/icons/hicolor/scalable/apps/lago-agents.svg"
 MAC_APP="$HOME/Applications/Lago Agents.app"
+# Windows: Lago runs in a WSL distribution, and Windows gets a Start menu shortcut to it.
+WSL=
+if [[ "$OS" == Linux ]] && { [[ -n "${WSL_DISTRO_NAME:-}" ]] || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; }; then
+    WSL=1
+fi
+WSL_LAUNCHER="$STATE_DIR/windows-launch.sh"
+# The Start menu folder, as WSL sees it ("" when Windows can't be asked).
+win_start_menu() {
+    local appdata
+    appdata="$(cd / && cmd.exe /d /c 'echo %APPDATA%' 2>/dev/null | tr -d '\r' | tail -1)"
+    [[ -n "$appdata" && "$appdata" != "%APPDATA%" ]] || return 0
+    wslpath -u "$appdata\\Microsoft\\Windows\\Start Menu\\Programs" 2>/dev/null || true
+}
 if [[ "$OS" == Darwin ]]; then
     # Homebrew's tools first, even in a shell Homebrew's "Next steps" never set up: macOS's own
     # python3 is too old.
@@ -25,6 +39,11 @@ fi
 if [[ "${1:-}" == "--uninstall" ]]; then
     rm -f "$MENU_FILE" "$ICON_FILE"
     rm -rf "$MAC_APP"
+    if [[ -n "$WSL" ]]; then
+        start_menu="$(win_start_menu)"
+        [[ -n "$start_menu" ]] && rm -f "$start_menu/Lago Agents.lnk"
+        rm -f "$WSL_LAUNCHER"
+    fi
     echo "Lago Agents removed from the app menu."
     echo "Running agents keep going; stop them with: tmux -L lago-agents kill-server"
     exit 0
@@ -34,12 +53,29 @@ missing=()
 for tool in python3 tmux git claude; do
     command -v "$tool" >/dev/null || missing+=("$tool")
 done
+if [[ -n "$WSL" ]]; then
+    # WSL puts Windows' PATH after Linux's: a `claude` or `python3` found under /mnt/c is
+    # Windows' own, which can't run agents in WSL. Each of them is needed inside WSL.
+    for tool in python3 tmux git claude; do
+        found="$(command -v "$tool" || true)"
+        if [[ -n "$found" && "$found" == /mnt/* ]]; then
+            echo "$tool here is Windows' own ($found): Lago Agents needs it installed inside WSL." >&2
+            missing+=("$tool")
+        fi
+    done
+fi
 if (( ${#missing[@]} )); then
     echo "Lago Agents needs ${missing[*]}, which isn't installed." >&2
     if [[ "$OS" == Darwin ]]; then
         echo "With Homebrew (https://brew.sh): brew install python tmux git; then Claude Code: npm install -g @anthropic-ai/claude-code" >&2
+    elif [[ -n "$WSL" ]]; then
+        echo "Inside WSL (Ubuntu, Debian): sudo apt install python3 tmux git; then Claude Code: curl -fsSL https://claude.ai/install.sh | bash" >&2
     fi
     exit 1
+fi
+if [[ -n "$WSL" && "$SCRIPT_DIR" == /mnt/* ]]; then
+    echo "Note: this checkout is on a Windows drive ($SCRIPT_DIR), which WSL reads slowly." >&2
+    echo "      It runs faster cloned inside WSL, for example in ~/lago-agents." >&2
 fi
 # The Python everything here runs with: python3, unless it's too old or broken. Homebrew's
 # Pythons can be built for a newer macOS than this one, and then can't load their XML module
@@ -177,6 +213,55 @@ LAUNCH
         iconutil -c icns "$ICONSET" -o "$MAC_APP/Contents/Resources/lago-agents.icns" 2>/dev/null || true
     fi
     echo "Lago Agents is in ~/Applications (open it from Spotlight or Launchpad)."
+elif [[ -n "$WSL" ]]; then
+    # A Start menu shortcut that starts Lago in this WSL distribution, with this shell's PATH
+    # (a shortcut's shell doesn't read ~/.bashrc, where claude's folder usually goes on the PATH).
+    mkdir -p "$STATE_DIR"
+    cat > "$WSL_LAUNCHER" <<LAUNCH
+#!/bin/sh
+export PATH="$PATH"
+exec "$SCRIPT_DIR/lago-agents" "\$@"
+LAUNCH
+    chmod +x "$WSL_LAUNCHER"
+    start_menu="$(win_start_menu)"
+    if [[ -n "$start_menu" ]] && command -v powershell.exe >/dev/null; then
+        # wslg.exe starts it without a console window; plain wsl.exe (older WSL) minimized.
+        wsl_exe='C:\Windows\System32\wsl.exe'
+        style=7
+        if [[ -e "$(wslpath -u 'C:\Program Files\WSL\wslg.exe' 2>/dev/null)" ]]; then
+            wsl_exe='C:\Program Files\WSL\wslg.exe'
+            style=1
+        fi
+        icon=""
+        if command -v rsvg-convert >/dev/null; then
+            # Windows wants an .ico: one 256-pixel PNG inside the icon format's header.
+            ico="$STATE_DIR/lago-agents.ico"
+            if rsvg-convert -w 256 -h 256 "$APP/ui/lago-agents-icon.svg" -o "$STATE_DIR/lago-agents-256.png" 2>/dev/null; then
+                "$PY" - "$STATE_DIR/lago-agents-256.png" "$ico" <<'PY' && icon="$(wslpath -w "$ico")"
+import struct, sys
+png = open(sys.argv[1], "rb").read()
+with open(sys.argv[2], "wb") as out:
+    out.write(struct.pack("<HHH", 0, 1, 1) + struct.pack("<BBBBHHII", 0, 0, 0, 0, 1, 32, len(png), 22) + png)
+PY
+            fi
+        fi
+        lnk="$(wslpath -w "$start_menu")\Lago Agents.lnk"
+        arguments="${WSL_DISTRO_NAME:+-d $WSL_DISTRO_NAME }--cd ~ -- '$WSL_LAUNCHER'"
+        q="'"
+        ps_quote() { printf "'%s'" "${1//$q/$q$q}"; }
+        shortcut="\$s = (New-Object -ComObject WScript.Shell).CreateShortcut($(ps_quote "$lnk"));"
+        shortcut+=" \$s.TargetPath = $(ps_quote "$wsl_exe"); \$s.Arguments = $(ps_quote "$arguments");"
+        shortcut+=" \$s.WindowStyle = $style; \$s.Description = 'Run and watch teams of AI agents';"
+        [[ -n "$icon" ]] && shortcut+=" \$s.IconLocation = $(ps_quote "$icon");"
+        shortcut+=" \$s.Save()"
+        if (cd / && powershell.exe -NoProfile -NonInteractive -Command "$shortcut" >/dev/null); then
+            echo "Lago Agents is in the Windows Start menu (it runs in WSL, $WSL_DISTRO_NAME)."
+        else
+            echo "Couldn't make the Start menu shortcut; start Lago Agents with: $SCRIPT_DIR/lago-agents" >&2
+        fi
+    else
+        echo "Windows isn't reachable from WSL (interop off?): start Lago Agents with $SCRIPT_DIR/lago-agents" >&2
+    fi
 else
     mkdir -p "$(dirname "$MENU_FILE")" "$(dirname "$ICON_FILE")"
     cp "$APP/ui/lago-agents-icon.svg" "$ICON_FILE"
